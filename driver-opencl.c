@@ -53,7 +53,6 @@ extern bool have_opencl;
 extern void *miner_thread(void *userdata);
 extern int dev_from_id(int thr_id);
 extern void tailsprintf(char *f, const char *fmt, ...);
-extern void wlog(const char *f, ...);
 extern void decay_time(double *f, double fadd);
 
 /**********************************************/
@@ -686,7 +685,7 @@ retry:
 				if (powertune != -1)
 					tailsprintf(logline, "P: %d%%", powertune);
 				tailsprintf(logline, "\n");
-				wlog(logline);
+				_wlog(logline);
 			}
 		}
 #endif

@@ -225,12 +225,11 @@ static bool avalon_decode_nonce(struct thr_info *thr, struct cgpu_info *avalon,
 	return submit_nonce(thr, work, nonce);
 }
 
-/* Wait until the ftdi chip returns a CTS saying we can send more data. The
- * status is updated every 40ms. */
+/* Wait until the ftdi chip returns a CTS saying we can send more data. */
 static void wait_avalon_ready(struct cgpu_info *avalon)
 {
 	while (avalon_buffer_full(avalon)) {
-		nmsleep(40);
+		nmsleep(AVALON_READ_TIMEOUT);
 	}
 }
 
@@ -242,10 +241,9 @@ static int avalon_read(struct cgpu_info *avalon, unsigned char *buf,
 	int err, amount, ofs = 2, cp;
 
 	/* If the buffer is ready to take more work, yield once in case the
-	 * write thread is waiting to be scheduled. Keep it under the time
-	 * it would take to fill the entire 512 byte buffer. */
+	 * write thread is waiting to be scheduled. */
 	if (!avalon_buffer_full(avalon))
-		nmsleep(32);
+		nmsleep(AVALON_READ_TIMEOUT);
 
 	err = usb_read_once_timeout(avalon, readbuf, readsize, &amount, timeout, ep);
 	applog(LOG_DEBUG, "%s%i: Get avalon read got err %d",
@@ -337,7 +335,6 @@ static int avalon_reset(struct cgpu_info *avalon, bool initial)
 static bool get_options(int this_option_offset, int *baud, int *miner_count,
 			int *asic_count, int *timeout, int *frequency)
 {
-	char err_buf[BUFSIZ+1];
 	char buf[BUFSIZ+1];
 	char *ptr, *comma, *colon, *colon2, *colon3, *colon4;
 	size_t max;
@@ -388,10 +385,8 @@ static bool get_options(int this_option_offset, int *baud, int *miner_count,
 		*baud = 19200;
 		break;
 	default:
-		sprintf(err_buf,
-			"Invalid avalon-options for baud (%s) "
+		quit(1, "Invalid avalon-options for baud (%s) "
 			"must be 115200, 57600, 38400 or 19200", buf);
-		quit(1, err_buf);
 	}
 
 	if (colon && *colon) {
@@ -404,11 +399,9 @@ static bool get_options(int this_option_offset, int *baud, int *miner_count,
 			if (tmp > 0 && tmp <= AVALON_DEFAULT_MINER_NUM) {
 				*miner_count = tmp;
 			} else {
-				sprintf(err_buf,
-					"Invalid avalon-options for "
+				quit(1, "Invalid avalon-options for "
 					"miner_count (%s) must be 1 ~ %d",
 					colon, AVALON_DEFAULT_MINER_NUM);
-				quit(1, err_buf);
 			}
 		}
 
@@ -421,11 +414,9 @@ static bool get_options(int this_option_offset, int *baud, int *miner_count,
 			if (tmp > 0 && tmp <= AVALON_DEFAULT_ASIC_NUM)
 				*asic_count = tmp;
 			else {
-				sprintf(err_buf,
-					"Invalid avalon-options for "
+				quit(1, "Invalid avalon-options for "
 					"asic_count (%s) must be 1 ~ %d",
 					colon2, AVALON_DEFAULT_ASIC_NUM);
-				quit(1, err_buf);
 			}
 
 			if (colon3 && *colon3) {
@@ -437,11 +428,9 @@ static bool get_options(int this_option_offset, int *baud, int *miner_count,
 				if (tmp > 0 && tmp <= 0xff)
 					*timeout = tmp;
 				else {
-					sprintf(err_buf,
-						"Invalid avalon-options for "
+					quit(1, "Invalid avalon-options for "
 						"timeout (%s) must be 1 ~ %d",
 						colon3, 0xff);
-					quit(1, err_buf);
 				}
 				if (colon4 && *colon4) {
 					tmp = atoi(colon4);
@@ -453,10 +442,8 @@ static bool get_options(int this_option_offset, int *baud, int *miner_count,
 						*frequency = tmp;
 						break;
 					default:
-						sprintf(err_buf,
-							"Invalid avalon-options for "
+						quit(1, "Invalid avalon-options for "
 							"frequency must be 256/270/282/300");
-							quit(1, err_buf);
 					}
 				}
 			}
@@ -1056,8 +1043,8 @@ static int64_t avalon_scanhash(struct thr_info *thr)
 	int64_t hash_count, us_timeout;
 	struct timespec abstime;
 
-	/* Full nonce range */
-	us_timeout = 0x100000000ll / info->asic_count / info->frequency;
+	/* Half nonce range */
+	us_timeout = 0x80000000ll / info->asic_count / info->frequency;
 	tdiff.tv_sec = us_timeout / 1000000;
 	tdiff.tv_usec = us_timeout - (tdiff.tv_sec * 1000000);
 	cgtime(&now);

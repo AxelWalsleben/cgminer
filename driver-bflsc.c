@@ -31,12 +31,35 @@
 #define LFSTR "<LF>"
 
 /*
+ * Firmware
+ * DRV_V2 expects (beyond V1) the GetInfo to return the chip count
+ * The queues are 40 instead of 20 and are *usually* consumed and filled
+ * in bursts due to e.g. a 16 chip device doing 16 items at a time and
+ * returning 16 results at a time
+ * If the device has varying chip speeds, it will gradually break up the
+ * burst of results as we progress
+ */
+enum driver_version {
+	BFLSC_DRVUNDEF = 0,
+	BFLSC_DRV1,
+	BFLSC_DRV2
+};
+
+/*
  * With Firmware 1.0.0 and a result queue of 20 the Max is:
  * inprocess = 12
  * max count = 9
  * 64+1+24+1+1+(1+8)*8+1 per line = 164 * 20
  * OK = 3
  * Total: 3304
+ *
+ * With Firmware 1.2.* and a result queue of 40 but a limit of 15 replies:
+ * inprocess = 12
+ * max count = 9
+ * 64+1+24+1+1+1+1+(1+8)*8+1 per line = 166 * 15
+ * OK = 3
+ * Total: 2514
+ *
  */
 #define BFLSC_BUFSIZ (0x1000)
 
@@ -49,6 +72,7 @@
 #define BFLSC_DI_XLINKPRESENT "XLINK PRESENT"
 #define BFLSC_DI_DEVICESINCHAIN "DEVICES IN CHAIN"
 #define BFLSC_DI_CHAINPRESENCE "CHAIN PRESENCE MASK"
+#define BFLSC_DI_CHIPS "CHIP PARALLELIZATION"
 
 #define FULLNONCE 0x100000000ULL
 
@@ -73,6 +97,7 @@ struct bflsc_dev {
 	int engines; // each engine represents a 'thread' in a chip
 	char *xlink_mode;
 	char *xlink_present;
+	char *chips;
 
 	// Status
 	bool dead; // TODO: handle seperate x-link devices failing?
@@ -103,6 +128,7 @@ struct bflsc_dev {
 };
 
 struct bflsc_info {
+	enum driver_version driver_version;
 	pthread_rwlock_t stat_lock;
 	struct thr_info results_thr;
 	uint64_t hashes_sent;
@@ -117,6 +143,13 @@ struct bflsc_info {
 	bool flash_led;
 	bool not_first_work; // allow ignoring the first nonce error
 	bool fanauto;
+	int que_size;
+	int que_full_enough;
+	int que_watermark;
+	int que_low;
+	int que_noncecount;
+	int que_fld_min;
+	int que_fld_max;
 };
 
 #define BFLSC_XLINKHDR '@'
@@ -147,9 +180,15 @@ struct QueueJobStructure {
 #define QUE_RES_LINES_MIN 3
 #define QUE_MIDSTATE 0
 #define QUE_BLOCKDATA 1
-#define QUE_NONCECOUNT 2
-#define QUE_FLD_MIN 3
-#define QUE_FLD_MAX 11
+
+#define QUE_NONCECOUNT_V1 2
+#define QUE_FLD_MIN_V1 3
+#define QUE_FLD_MAX_V1 11
+
+#define QUE_CHIP_V2 2
+#define QUE_NONCECOUNT_V2 3
+#define QUE_FLD_MIN_V2 4
+#define QUE_FLD_MAX_V2 12
 
 #define BFLSC_SIGNATURE 0xc1
 #define BFLSC_EOW 0xfe
@@ -192,7 +231,7 @@ struct SaveString {
 #define BFLSC_QRES_LEN (sizeof(BFLSC_QRES)-1)
 #define BFLSC_QFLUSH "ZQX"
 #define BFLSC_QFLUSH_LEN (sizeof(BFLSC_QFLUSH)-1)
-#define BFLSC_FANAUTO "Z5X"
+#define BFLSC_FANAUTO "Z9X"
 #define BFLSC_FANOUT_LEN (sizeof(BFLSC_FANAUTO)-1)
 #define BFLSC_FAN0 "Z0X"
 #define BFLSC_FAN0_LEN (sizeof(BFLSC_FAN0)-1)
@@ -294,14 +333,24 @@ struct SaveString {
 #define BFLSC_MAX_SLEEP 2000
 
 #define BAJ_LATENCY LATENCY_STD
-#define BAL_LATENCY LATENCY_STD
-#define BAS_LATENCY LATENCY_STD
+#define BAL_LATENCY 12
+#define BAS_LATENCY 12
+// For now a BAM doesn't really exist - it's currently 8 independent BASs
 #define BAM_LATENCY 2
 
 #define BFLSC_TEMP_SLEEPMS 5
-#define BFLSC_QUE_SIZE 20
-#define BFLSC_QUE_FULL_ENOUGH 13
-#define BFLSC_QUE_WATERMARK 6
+
+#define BFLSC_QUE_SIZE_V1 20
+#define BFLSC_QUE_FULL_ENOUGH_V1 13
+#define BFLSC_QUE_WATERMARK_V1 6
+#define BFLSC_QUE_LOW_V1 2
+
+// TODO: use 5 batch jobs
+// TODO: base these numbers on the chip count?
+#define BFLSC_QUE_SIZE_V2 40
+#define BFLSC_QUE_FULL_ENOUGH_V2 36
+#define BFLSC_QUE_WATERMARK_V2 32
+#define BFLSC_QUE_LOW_V2 8
 
 // Must drop this far below cutoff before resuming work
 #define BFLSC_TEMP_RECOVER 5
@@ -317,6 +366,29 @@ struct SaveString {
 static const char *blank = "";
 
 struct device_drv bflsc_drv;
+
+static enum driver_version drv_ver(struct cgpu_info *bflsc, const char *ver)
+{
+	char *tmp;
+
+	if (strcmp(ver, "1.0.0") == 0)
+		return BFLSC_DRV1;
+
+	if (strncmp(ver, "1.0", 3) == 0 || strncmp(ver, "1.1", 3) == 0) {
+		applog(LOG_WARNING, "%s detect (%s) Warning assuming firmware '%s' is Ver1",
+			bflsc->drv->dname, bflsc->device_path, ver);
+		return BFLSC_DRV1;
+	}
+
+	if (strncmp(ver, "1.2", 3) == 0)
+		return BFLSC_DRV2;
+
+	tmp = str_text((char *)ver);
+	applog(LOG_WARNING, "%s detect (%s) Warning unknown firmware '%s' using Ver2",
+		bflsc->drv->dname, bflsc->device_path, tmp);
+	free(tmp);
+	return BFLSC_DRV2;
+}
 
 static void xlinkstr(char *xlink, int dev, struct bflsc_info *sc_info)
 {
@@ -658,7 +730,7 @@ static void __bflsc_initialise(struct cgpu_info *bflsc)
 		bflsc->drv->name, bflsc->device_id, err);
 
 	if (!bflsc->cutofftemp)
-		bflsc->cutofftemp = 80;
+		bflsc->cutofftemp = 90;
 }
 
 static void bflsc_initialise(struct cgpu_info *bflsc)
@@ -685,8 +757,8 @@ static bool getinfo(struct cgpu_info *bflsc, int dev)
 	char buf[BFLSC_BUFSIZ+1];
 	int err, amount;
 	char **items, *firstname, **fields, *lf;
+	bool res, ok = false;
 	int i, lines, count;
-	bool res, ok;
 	char *tmp;
 
 	/*
@@ -707,7 +779,7 @@ static bool getinfo(struct cgpu_info *bflsc, int dev)
 	if (err < 0 || amount != BFLSC_DETAILS_LEN) {
 		applog(LOG_ERR, "%s detect (%s) send details request failed (%d:%d)",
 			bflsc->drv->dname, bflsc->device_path, amount, err);
-		return false;
+		return ok;
 	}
 
 	err = usb_read_ok_timeout(bflsc, buf, sizeof(buf)-1, &amount,
@@ -720,14 +792,14 @@ static bool getinfo(struct cgpu_info *bflsc, int dev)
 			applog(LOG_ERR, "%s detect (%s) get details returned nothing (%d:%d)",
 					bflsc->drv->dname, bflsc->device_path, amount, err);
 		}
-		return false;
+		return ok;
 	}
 
 	memset(&sc_dev, 0, sizeof(struct bflsc_dev));
 	sc_info->sc_count = 1;
 	res = tolines(bflsc, dev, &(buf[0]), &lines, &items, C_GETDETAILS);
 	if (!res)
-		return false;
+		return ok;
 
 	tmp = str_text(buf);
 	strcpy(sc_dev.getinfo, tmp);
@@ -747,12 +819,7 @@ static bool getinfo(struct cgpu_info *bflsc, int dev)
 		}
 		if (strcmp(firstname, BFLSC_DI_FIRMWARE) == 0) {
 			sc_dev.firmware = strdup(fields[0]);
-			if (strcmp(sc_dev.firmware, "1.0.0")) {
-				tmp = str_text(items[i]);
-				applog(LOG_WARNING, "%s detect (%s) Warning unknown firmware '%s'",
-					bflsc->drv->dname, bflsc->device_path, tmp);
-				free(tmp);
-			}
+			sc_info->driver_version = drv_ver(bflsc, sc_dev.firmware);
 		}
 		else if (strcmp(firstname, BFLSC_DI_ENGINES) == 0) {
 			sc_dev.engines = atoi(fields[0]);
@@ -777,8 +844,16 @@ static bool getinfo(struct cgpu_info *bflsc, int dev)
 				free(tmp);
 				goto mata;
 			}
+		else if (strcmp(firstname, BFLSC_DI_CHIPS) == 0)
+			sc_dev.chips = strdup(fields[0]);
 		}
 		freebreakdown(&count, &firstname, &fields);
+	}
+
+	if (sc_info->driver_version == BFLSC_DRVUNDEF) {
+		applog(LOG_WARNING, "%s detect (%s) missing %s",
+			bflsc->drv->dname, bflsc->device_path, BFLSC_DI_FIRMWARE);
+		goto ne;
 	}
 
 	sc_info->sc_devs = calloc(sc_info->sc_count, sizeof(struct bflsc_dev));
@@ -886,6 +961,31 @@ reinit:
 
 	if (!getinfo(bflsc, 0))
 		goto unshin;
+
+	switch (sc_info->driver_version) {
+		case BFLSC_DRV1:
+			sc_info->que_size = BFLSC_QUE_SIZE_V1;
+			sc_info->que_full_enough = BFLSC_QUE_FULL_ENOUGH_V1;
+			sc_info->que_watermark = BFLSC_QUE_WATERMARK_V1;
+			sc_info->que_low = BFLSC_QUE_LOW_V1;
+			sc_info->que_noncecount = QUE_NONCECOUNT_V1;
+			sc_info->que_fld_min = QUE_FLD_MIN_V1;
+			sc_info->que_fld_max = QUE_FLD_MAX_V1;
+			break;
+		case BFLSC_DRV2:
+		case BFLSC_DRVUNDEF:
+		default:
+			sc_info->driver_version = BFLSC_DRV2;
+
+			sc_info->que_size = BFLSC_QUE_SIZE_V2;
+			sc_info->que_full_enough = BFLSC_QUE_FULL_ENOUGH_V2;
+			sc_info->que_watermark = BFLSC_QUE_WATERMARK_V2;
+			sc_info->que_low = BFLSC_QUE_LOW_V2;
+			sc_info->que_noncecount = QUE_NONCECOUNT_V2;
+			sc_info->que_fld_min = QUE_FLD_MIN_V2;
+			sc_info->que_fld_max = QUE_FLD_MAX_V2;
+			break;
+	}
 
 	sc_info->scan_sleep_time = BAS_SCAN_TIME;
 	sc_info->results_sleep_time = BAS_RES_TIME;
@@ -1280,7 +1380,7 @@ static void process_nonces(struct cgpu_info *bflsc, int dev, char *xlink, char *
 	bool res;
 	char *tmp;
 
-	if (count < QUE_FLD_MIN) {
+	if (count < sc_info->que_fld_min) {
 		tmp = str_text(data);
 		applog(LOG_ERR, "%s%i:%s work returned too small (%d,%s)",
 				bflsc->drv->name, bflsc->device_id, xlink, count, tmp);
@@ -1289,18 +1389,18 @@ static void process_nonces(struct cgpu_info *bflsc, int dev, char *xlink, char *
 		return;
 	}
 
-	if (count > QUE_FLD_MAX) {
+	if (count > sc_info->que_fld_max) {
 		applog(LOG_ERR, "%s%i:%s work returned too large (%d) processing %d anyway",
-				bflsc->drv->name, bflsc->device_id, xlink, count, QUE_FLD_MAX);
-		count = QUE_FLD_MAX;
+				bflsc->drv->name, bflsc->device_id, xlink, count, sc_info->que_fld_max);
+		count = sc_info->que_fld_max;
 		inc_hw_errors(bflsc->thr[0]);
 	}
 
-	num = atoi(fields[QUE_NONCECOUNT]);
-	if (num != count - QUE_FLD_MIN) {
+	num = atoi(fields[sc_info->que_noncecount]);
+	if (num != count - sc_info->que_fld_min) {
 		tmp = str_text(data);
 		applog(LOG_ERR, "%s%i:%s incorrect data count (%d) will use %d instead from (%s)",
-				bflsc->drv->name, bflsc->device_id, xlink, num, count - QUE_FLD_MAX, tmp);
+				bflsc->drv->name, bflsc->device_id, xlink, num, count - sc_info->que_fld_max, tmp);
 		free(tmp);
 		inc_hw_errors(bflsc->thr[0]);
 	}
@@ -1327,7 +1427,7 @@ static void process_nonces(struct cgpu_info *bflsc, int dev, char *xlink, char *
 	}
 
 	res = false;
-	for (i = QUE_FLD_MIN; i < count; i++) {
+	for (i = sc_info->que_fld_min; i < count; i++) {
 		if (strlen(fields[i]) != 8) {
 			tmp = str_text(data);
 			applog(LOG_ERR, "%s%i:%s invalid nonce (%s) will try to process anyway",
@@ -1543,7 +1643,8 @@ static void bflsc_thread_enable(struct thr_info *thr)
 	bflsc_initialise(bflsc);
 }
 
-static bool bflsc_send_work(struct cgpu_info *bflsc, int dev, struct work *work)
+static bool bflsc_send_work(struct cgpu_info *bflsc, int dev, struct work *work,
+			    bool mandatory)
 {
 	struct bflsc_info *sc_info = (struct bflsc_info *)(bflsc->device_data);
 	struct FullNonceRangeJob data;
@@ -1568,7 +1669,15 @@ static bool bflsc_send_work(struct cgpu_info *bflsc, int dev, struct work *work)
 
 	try = 0;
 
-	mutex_lock(&(bflsc->device_mutex));
+	/* On faster devices we have a lot of lock contention so only
+	 * mandatorily grab the lock and send work if the queue is empty since
+	 * we have a submit queue. */
+	if (mandatory)
+		mutex_lock(&(bflsc->device_mutex));
+	else {
+		if (mutex_trylock(&bflsc->device_mutex))
+			return false;
+	}
 re_send:
 	err = write_to_dev(bflsc, dev, BFLSC_QJOB, BFLSC_QJOB_LEN, &amount, C_REQUESTQUEJOB);
 	if (err < 0 || amount != BFLSC_QJOB_LEN) {
@@ -1593,7 +1702,7 @@ re_send:
 	}
 
 	if (!getokerr(bflsc, C_QUEJOBSTATUS, &err, &amount, buf, sizeof(buf))) {
-		// TODO: check for QUEUE FULL and set work_queued to BFLSC_QUE_SIZE
+		// TODO: check for QUEUE FULL and set work_queued to sc_info->que_size
 		//  and report a code bug LOG_ERR - coz it should never happen
 
 		// Try twice
@@ -1629,6 +1738,8 @@ static bool bflsc_queue_full(struct cgpu_info *bflsc)
 	// if something is wrong with a device try the next one available
 	// TODO: try them all? Add an unavailable flag to sc_devs[i] init to 0 here first
 	while (++tries < 3) {
+		bool mandatory = false;
+
 		// Device is gone - shouldn't normally get here
 		if (bflsc->usbinfo.nodev) {
 			ret = true;
@@ -1648,7 +1759,7 @@ static bool bflsc_queue_full(struct cgpu_info *bflsc)
 		}
 
 		if (dev == -1) {
-			que = BFLSC_QUE_SIZE * 10; // 10x is certainly above the MAX it could be
+			que = sc_info->que_size * 10; // 10x is certainly above the MAX it could be
 			// The first device with the smallest amount queued
 			for (i = 0; i < sc_info->sc_count; i++) {
 				if (i != tried && sc_info->sc_devs[i].work_queued < que &&
@@ -1657,8 +1768,10 @@ static bool bflsc_queue_full(struct cgpu_info *bflsc)
 					que = sc_info->sc_devs[i].work_queued;
 				}
 			}
-			if (que > BFLSC_QUE_FULL_ENOUGH)
+			if (que > sc_info->que_full_enough)
 				dev = -1;
+			else if (que < sc_info->que_low)
+				mandatory = true;
 		}
 		rd_unlock(&(sc_info->stat_lock));
 
@@ -1672,7 +1785,7 @@ static bool bflsc_queue_full(struct cgpu_info *bflsc)
 			work = get_queued(bflsc);
 		if (unlikely(!work))
 			break;
-		if (bflsc_send_work(bflsc, dev, work)) {
+		if (bflsc_send_work(bflsc, dev, work, mandatory)) {
 			work = NULL;
 			break;
 		} else
@@ -1740,10 +1853,10 @@ static int64_t bflsc_scanwork(struct thr_info *thr)
 	waited = restart_wait(sc_info->scan_sleep_time);
 	if (waited == ETIMEDOUT) {
 		unsigned int old_sleep_time, new_sleep_time = 0;
-		int min_queued = BFLSC_QUE_SIZE;
+		int min_queued = sc_info->que_size;
 		/* Only adjust the scan_sleep_time if we did not receive a
 		 * restart message while waiting. Try to adjust sleep time
-		 * so we drop to BFLSC_QUE_WATERMARK before getting more work.
+		 * so we drop to sc_info->que_watermark before getting more work.
 		 */
 
 		rd_lock(&sc_info->stat_lock);
@@ -1756,9 +1869,9 @@ static int64_t bflsc_scanwork(struct thr_info *thr)
 		new_sleep_time = old_sleep_time;
 
 		/* Increase slowly but decrease quickly */
-		if (min_queued > BFLSC_QUE_WATERMARK && old_sleep_time < BFLSC_MAX_SLEEP)
+		if (min_queued > sc_info->que_full_enough && old_sleep_time < BFLSC_MAX_SLEEP)
 			new_sleep_time = old_sleep_time * 21 / 20;
-		else if (min_queued < BFLSC_QUE_WATERMARK)
+		else if (min_queued < sc_info->que_watermark)
 			new_sleep_time = old_sleep_time * 2 / 3;
 
 		/* Do not sleep more than BFLSC_MAX_SLEEP so we can always
@@ -1792,17 +1905,19 @@ static int64_t bflsc_scanwork(struct thr_info *thr)
 	return ret;
 }
 
+/* Set the fanspeed to auto for any valid value under 60, or max for any value
+ * above 60 or if we don't know the temperature. */
 static void bflsc_set_fanspeed(struct cgpu_info *bflsc)
 {
 	struct bflsc_info *sc_info = (struct bflsc_info *)bflsc->device_data;
 	int amount, err;
 
-	if ((bflsc->temp <= 60 && sc_info->fanauto) ||
-	    (bflsc->temp > 60 && !sc_info->fanauto))
+	if ((bflsc->temp <= 60 && bflsc->temp > 0 && sc_info->fanauto) ||
+	    ((bflsc->temp > 60 || !bflsc->temp) && !sc_info->fanauto))
 		return;
 
 	mutex_lock(&bflsc->device_mutex);
-	if (bflsc->temp > 60) {
+	if (bflsc->temp > 60 || !bflsc->temp) {
 		write_to_dev(bflsc, 0, BFLSC_FAN4, BFLSC_FAN4_LEN, &amount,
 			     C_SETFAN);
 		sc_info->fanauto = false;
@@ -1870,6 +1985,7 @@ static struct api_data *bflsc_api_stats(struct cgpu_info *bflsc)
 {
 	struct bflsc_info *sc_info = (struct bflsc_info *)(bflsc->device_data);
 	struct api_data *root = NULL;
+	int i;
 
 //if no x-link ... etc
 	rd_lock(&(sc_info->stat_lock));
@@ -1882,7 +1998,25 @@ static struct api_data *bflsc_api_stats(struct cgpu_info *bflsc)
 	root = api_add_temp(root, "Temp2 Max", &(sc_info->sc_devs[0].temp2_max), true);
 	root = api_add_time(root, "Temp1 Max Time", &(sc_info->sc_devs[0].temp1_max_time), true);
 	root = api_add_time(root, "Temp2 Max Time", &(sc_info->sc_devs[0].temp2_max_time), true);
+	root = api_add_int(root, "Work Queued", &(sc_info->sc_devs[0].work_queued), true);
+	root = api_add_int(root, "Work Complete", &(sc_info->sc_devs[0].work_complete), true);
+	root = api_add_bool(root, "Overheat", &(sc_info->sc_devs[0].overheat), true);
+	root = api_add_uint64(root, "Flush ID", &(sc_info->sc_devs[0].flush_id), true);
+	root = api_add_uint64(root, "Result ID", &(sc_info->sc_devs[0].result_id), true);
+	root = api_add_bool(root, "Flushed", &(sc_info->sc_devs[0].flushed), true);
+	root = api_add_uint(root, "Scan Sleep", &(sc_info->scan_sleep_time), true);
+	root = api_add_uint(root, "Results Sleep", &(sc_info->results_sleep_time), true);
+	root = api_add_uint(root, "Work ms", &(sc_info->default_ms_work), true);
 	rd_unlock(&(sc_info->stat_lock));
+
+	i = (int)(sc_info->driver_version);
+	root = api_add_int(root, "Driver", &i, true);
+	root = api_add_string(root, "Firmware", sc_info->sc_devs[0].firmware, false);
+	root = api_add_string(root, "Chips", sc_info->sc_devs[0].chips, false);
+	root = api_add_int(root, "Que Size", &(sc_info->que_size), false);
+	root = api_add_int(root, "Que Full", &(sc_info->que_full_enough), false);
+	root = api_add_int(root, "Que Watermark", &(sc_info->que_watermark), false);
+	root = api_add_int(root, "Que Low", &(sc_info->que_low), false);
 	root = api_add_escape(root, "GetInfo", sc_info->sc_devs[0].getinfo, false);
 
 /*

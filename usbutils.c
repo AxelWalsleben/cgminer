@@ -61,7 +61,7 @@
 #define AVALON_TIMEOUT_MS 999
 #define ICARUS_TIMEOUT_MS 999
 #else
-#define BFLSC_TIMEOUT_MS 200
+#define BFLSC_TIMEOUT_MS 300
 #define BITFORCE_TIMEOUT_MS 200
 #define MODMINER_TIMEOUT_MS 100
 #define AVALON_TIMEOUT_MS 200
@@ -305,7 +305,7 @@ static struct usb_find_devices find_dev[] = {
 		.epcount = 0,
 		.eps = NULL },
 #endif
-	{ DRV_LAST, NULL, 0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0, NULL }
+	{ DRV_LAST, NULL, 0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0, 0, NULL }
 };
 
 #ifdef USE_BFLSC
@@ -924,7 +924,7 @@ void usb_all(int level)
 		for (i = 0; i < count; i++)
 			usb_full(&j, list[i], &buf, &off, &len, level);
 
-		applog(LOG_WARNING, "%s", buf);
+		_applog(LOG_WARNING, buf);
 
 		free(buf);
 
@@ -1046,7 +1046,6 @@ void usb_applog(struct cgpu_info *cgpu, enum usb_cmds cmd, char *msg, int amount
                         err, amount);
 }
 
-#ifdef WIN32
 static void in_use_store_ress(uint8_t bus_number, uint8_t device_address, void *resource1, void *resource2)
 {
 	struct usb_in_use_list *in_use_tmp;
@@ -1118,7 +1117,6 @@ static void in_use_get_ress(uint8_t bus_number, uint8_t device_address, void **r
 		applog(LOG_ERR, "FAIL: USB get_lock empty (%d:%d)",
 				(int)bus_number, (int)device_address);
 }
-#endif
 
 static bool __is_in_use(uint8_t bus_number, uint8_t device_address)
 {
@@ -1465,13 +1463,13 @@ struct cgpu_info *usb_free_cgpu_devlock(struct cgpu_info *cgpu, bool free_devloc
  *  the thread Cancelability unrestored
  */
 #define DEVLOCK(cgpu, _pth_state) do { \
-			pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &_pth_state); \
+			pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &_pth_state); \
 			wr_lock(cgpu->usbinfo.devlock); \
 			} while (0)
 
 #define DEVUNLOCK(cgpu, _pth_state) do { \
 			wr_unlock(cgpu->usbinfo.devlock); \
-			pthread_setcanceltype(_pth_state, NULL); \
+			pthread_setcancelstate(_pth_state, NULL); \
 			} while (0)
 
 static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct usb_find_devices *found)
@@ -1537,7 +1535,7 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 			case LIBUSB_ERROR_NOT_SUPPORTED:
 				applog(LOG_ERR,
 					"USB init, open device failed, err %d, "
-					"you need to install a Windows USB driver for %s",
+					"you need to install a WinUSB driver for %s",
 					err, devstr);
 				break;
 #endif
@@ -1649,6 +1647,7 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 					&&  epdesc->wMaxPacketSize >= found->eps[k].size
 					&&  epdesc->bEndpointAddress == found->eps[k].ep) {
 						found->eps[k].found = true;
+						found->wMaxPacketSize = epdesc->wMaxPacketSize;
 						break;
 					}
 				}
@@ -1890,7 +1889,7 @@ void usb_detect(struct device_drv *drv, bool (*device_detect)(struct libusb_devi
 
 	count = libusb_get_device_list(NULL, &list);
 	if (count < 0) {
-		applog(LOG_DEBUG, "USB scan devices: failed, err %zd", count);
+		applog(LOG_DEBUG, "USB scan devices: failed, err %d", (int)count);
 		return;
 	}
 
@@ -2185,27 +2184,46 @@ usb_bulk_transfer(struct libusb_device_handle *dev_handle,
 {
 	int err, tries = 0;
 
+	/* Limit length of transfer to the largest this descriptor supports
+	 * and leave the higher level functions to transfer more if needed. */
+#if 0
+	if (length > cgpu->usbdev->found->wMaxPacketSize)
+		length = cgpu->usbdev->found->wMaxPacketSize;
+#endif
+	if (length > 512)
+		length = 512;
+
 	cg_rlock(&cgusb_fd_lock);
 	err = libusb_bulk_transfer(dev_handle, endpoint, data, length,
 				   transferred, timeout);
 	cg_runlock(&cgusb_fd_lock);
 
-	if (unlikely(err == LIBUSB_ERROR_PIPE)) {
-		applog(LOG_WARNING, "%s: libusb pipe error, trying to clear",
-		       cgpu->drv->name);
+	if (err == LIBUSB_ERROR_PIPE) {
+		cgpu->usbinfo.last_pipe = time(NULL);
+		cgpu->usbinfo.pipe_count++;
+		applog(LOG_INFO, "%s%i: libusb pipe error, trying to clear",
+			cgpu->drv->name, cgpu->device_id);
 		do {
 			err = libusb_clear_halt(dev_handle, endpoint);
 			if (unlikely(err == LIBUSB_ERROR_NOT_FOUND ||
-				     err == LIBUSB_ERROR_NO_DEVICE))
+				     err == LIBUSB_ERROR_NO_DEVICE)) {
+					cgpu->usbinfo.clear_err_count++;
 					break;
+			}
 
 			cg_rlock(&cgusb_fd_lock);
 			err = libusb_bulk_transfer(dev_handle, endpoint, data,
 						   length, transferred, timeout);
 			cg_runlock(&cgusb_fd_lock);
+
+			if (err)
+				cgpu->usbinfo.retry_err_count++;
 		} while (err == LIBUSB_ERROR_PIPE && tries++ < USB_RETRY_MAX);
-		applog(LOG_DEBUG, "%s: libusb pipe error%scleared",
-		       cgpu->drv->name, err ? " not " : " ");
+		applog(LOG_DEBUG, "%s%i: libusb pipe error%scleared",
+			cgpu->drv->name, cgpu->device_id, err ? " not " : " ");
+
+		if (err)
+			cgpu->usbinfo.clear_fail_count++;
 	}
 
 	return err;
@@ -2247,7 +2265,7 @@ int _usb_read(struct cgpu_info *cgpu, int ep, char *buf, size_t bufsiz, int *pro
 	USBDEBUG("USB debug: _usb_read(%s (nodev=%s),ep=%d,buf=%p,bufsiz=%zu,proc=%p,timeout=%u,end=%s,cmd=%s,ftdi=%s,readonce=%s)", cgpu->drv->name, bool_str(cgpu->usbinfo.nodev), ep, buf, bufsiz, processed, timeout, end ? (char *)str_text((char *)end) : "NULL", usb_cmdname(cmd), bool_str(ftdi), bool_str(readonce));
 
 	if (bufsiz > USB_MAX_READ)
-		quit(1, "%s USB read request %d too large (max=%d)", cgpu->drv->name, bufsiz, USB_MAX_READ);
+		quit(1, "%s USB read request %d too large (max=%d)", cgpu->drv->name, (int)bufsiz, USB_MAX_READ);
 
 	if (timeout == DEVTIMEOUT)
 		timeout = usbdev->found->timeout;
@@ -2542,16 +2560,14 @@ out_unlock:
 	return err;
 }
 
-int _usb_transfer(struct cgpu_info *cgpu, uint8_t request_type, uint8_t bRequest, uint16_t wValue, uint16_t wIndex, uint32_t *data, int siz, unsigned int timeout, __maybe_unused enum usb_cmds cmd)
+int __usb_transfer(struct cgpu_info *cgpu, uint8_t request_type, uint8_t bRequest, uint16_t wValue, uint16_t wIndex, uint32_t *data, int siz, unsigned int timeout, __maybe_unused enum usb_cmds cmd)
 {
 	struct cg_usb_device *usbdev;
 #if DO_USB_STATS
 	struct timeval tv_start, tv_finish;
 #endif
 	uint32_t *buf = NULL;
-	int err, i, bufsiz, pstate;
-
-	DEVLOCK(cgpu, pstate);
+	int err, i, bufsiz;
 
 	USBDEBUG("USB debug: _usb_transfer(%s (nodev=%s),type=%"PRIu8",req=%"PRIu8",value=%"PRIu16",index=%"PRIu16",siz=%d,timeout=%u,cmd=%s)", cgpu->drv->name, bool_str(cgpu->usbinfo.nodev), request_type, bRequest, wValue, wIndex, siz, timeout, usb_cmdname(cmd));
 
@@ -2559,7 +2575,7 @@ int _usb_transfer(struct cgpu_info *cgpu, uint8_t request_type, uint8_t bRequest
 		USB_REJECT(cgpu, MODE_CTRL_WRITE);
 
 		err = LIBUSB_ERROR_NO_DEVICE;
-		goto out_unlock;
+		goto out_;
 	}
 	usbdev = cgpu->usbdev;
 
@@ -2591,13 +2607,23 @@ int _usb_transfer(struct cgpu_info *cgpu, uint8_t request_type, uint8_t bRequest
 
 	IOERR_CHECK(cgpu, err);
 
-	if (buf)
-		free(buf);
+	free(buf);
 
 	if (NOCONTROLDEV(err))
 		release_cgpu(cgpu);
 
-out_unlock:
+out_:
+	return err;
+}
+
+int _usb_transfer(struct cgpu_info *cgpu, uint8_t request_type, uint8_t bRequest, uint16_t wValue, uint16_t wIndex, uint32_t *data, int siz, unsigned int timeout, enum usb_cmds cmd)
+{
+	int pstate, err;
+
+	DEVLOCK(cgpu, pstate);
+
+	err = __usb_transfer(cgpu, request_type, bRequest, wValue, wIndex, data, siz, timeout, cmd);
+
 	DEVUNLOCK(cgpu, pstate);
 
 	return err;
@@ -2677,23 +2703,30 @@ int usb_ftdi_cts(struct cgpu_info *cgpu)
 
 int usb_ftdi_set_latency(struct cgpu_info *cgpu)
 {
-	int err;
+	int err = 0;
+	int pstate;
 
-	if (cgpu->usbdev->usb_type != USB_TYPE_FTDI) {
-		applog(LOG_ERR, "%s: cgid %d latency request on non-FTDI device",
-			cgpu->drv->name, cgpu->cgminer_id);
-		return LIBUSB_ERROR_NOT_SUPPORTED;
+	DEVLOCK(cgpu, pstate);
+
+	if (cgpu->usbdev) {
+		if (cgpu->usbdev->usb_type != USB_TYPE_FTDI) {
+			applog(LOG_ERR, "%s: cgid %d latency request on non-FTDI device",
+				cgpu->drv->name, cgpu->cgminer_id);
+			err = LIBUSB_ERROR_NOT_SUPPORTED;
+		} else if (cgpu->usbdev->found->latency == LATENCY_UNUSED) {
+			applog(LOG_ERR, "%s: cgid %d invalid latency (UNUSED)",
+				cgpu->drv->name, cgpu->cgminer_id);
+			err = LIBUSB_ERROR_NOT_SUPPORTED;
+		}
+
+		if (!err)
+			err = __usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_LATENCY,
+						cgpu->usbdev->found->latency,
+						cgpu->usbdev->found->interface,
+						NULL, 0, DEVTIMEOUT, C_LATENCY);
 	}
 
-	if (cgpu->usbdev->found->latency == LATENCY_UNUSED) {
-		applog(LOG_ERR, "%s: cgid %d invalid latency (UNUSED)",
-			cgpu->drv->name, cgpu->cgminer_id);
-		return LIBUSB_ERROR_NOT_SUPPORTED;
-	}
-
-	err = usb_transfer_data(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_LATENCY,
-				cgpu->usbdev->found->latency,
-				cgpu->usbdev->found->interface, NULL, 0, C_LATENCY);
+	DEVUNLOCK(cgpu, pstate);
 
 	applog(LOG_DEBUG, "%s: cgid %d %s got err %d",
 				cgpu->drv->name, cgpu->cgminer_id,
@@ -2704,9 +2737,13 @@ int usb_ftdi_set_latency(struct cgpu_info *cgpu)
 
 void usb_buffer_enable(struct cgpu_info *cgpu)
 {
-	struct cg_usb_device *cgusb = cgpu->usbdev;
+	struct cg_usb_device *cgusb;
+	int pstate;
 
-	if (!cgusb->buffer) {
+	DEVLOCK(cgpu, pstate);
+
+	cgusb = cgpu->usbdev;
+	if (cgusb && !cgusb->buffer) {
 		cgusb->bufamt = 0;
 		cgusb->buffer = malloc(USB_MAX_READ+1);
 		if (!cgusb->buffer)
@@ -2714,40 +2751,66 @@ void usb_buffer_enable(struct cgpu_info *cgpu)
 				cgpu->drv->name, cgpu->device_id);
 		cgusb->bufsiz = USB_MAX_READ;
 	}
+
+	DEVUNLOCK(cgpu, pstate);
 }
 
 void usb_buffer_disable(struct cgpu_info *cgpu)
 {
-	struct cg_usb_device *cgusb = cgpu->usbdev;
+	struct cg_usb_device *cgusb;
+	int pstate;
 
-	if (cgusb->buffer) {
+	DEVLOCK(cgpu, pstate);
+
+	cgusb = cgpu->usbdev;
+	if (cgusb && cgusb->buffer) {
 		cgusb->bufamt = 0;
 		cgusb->bufsiz = 0;
 		free(cgusb->buffer);
 		cgusb->buffer = NULL;
 	}
+
+	DEVUNLOCK(cgpu, pstate);
 }
 
 void usb_buffer_clear(struct cgpu_info *cgpu)
 {
-	struct cg_usb_device *cgusb = cgpu->usbdev;
+	int pstate;
 
-	cgusb->bufamt = 0;
+	DEVLOCK(cgpu, pstate);
+
+	if (cgpu->usbdev)
+		cgpu->usbdev->bufamt = 0;
+
+	DEVUNLOCK(cgpu, pstate);
 }
 
 uint32_t usb_buffer_size(struct cgpu_info *cgpu)
 {
-	struct cg_usb_device *cgusb = cgpu->usbdev;
+	uint32_t ret = 0;
+	int pstate;
 
-	return cgusb->bufamt;
+	DEVLOCK(cgpu, pstate);
+
+	if (cgpu->usbdev)
+		ret = cgpu->usbdev->bufamt;
+
+	DEVUNLOCK(cgpu, pstate);
+
+	return ret;
 }
 
 // Need to set all devices with matching usbdev
 void usb_set_dev_start(struct cgpu_info *cgpu)
 {
-	struct cg_usb_device *cgusb = cgpu->usbdev;
+	struct cg_usb_device *cgusb;
 	struct cgpu_info *cgpu2;
 	struct timeval now;
+	int pstate;
+
+	DEVLOCK(cgpu, pstate);
+
+	cgusb = cgpu->usbdev;
 
 	// If the device wasn't dropped
 	if (cgusb != NULL) {
@@ -2761,6 +2824,8 @@ void usb_set_dev_start(struct cgpu_info *cgpu)
 				copy_time(&(cgpu2->dev_start_tv), &now);
 		}
 	}
+
+	DEVUNLOCK(cgpu, pstate);
 }
 
 void usb_cleanup()
@@ -2988,7 +3053,7 @@ static LPSECURITY_ATTRIBUTES mksec(const char *dname, uint8_t bus_number, uint8_
 		applog(LOG_ERR,
 			"MTX: %s (%d:%d) USB failed to init secdes err (%d)",
 			dname, (int)bus_number, (int)device_address,
-			GetLastError());
+			(int)GetLastError());
 		free(sec_des);
 		return NULL;
 	}
@@ -2997,7 +3062,7 @@ static LPSECURITY_ATTRIBUTES mksec(const char *dname, uint8_t bus_number, uint8_
 		applog(LOG_ERR,
 			"MTX: %s (%d:%d) USB failed to secdes dacl err (%d)",
 			dname, (int)bus_number, (int)device_address,
-			GetLastError());
+			(int)GetLastError());
 		free(sec_des);
 		return NULL;
 	}
@@ -3006,7 +3071,7 @@ static LPSECURITY_ATTRIBUTES mksec(const char *dname, uint8_t bus_number, uint8_
 		applog(LOG_ERR,
 			"MTX: %s (%d:%d) USB failed to create gsid err (%d)",
 			dname, (int)bus_number, (int)device_address,
-			GetLastError());
+			(int)GetLastError());
 		free(sec_des);
 		return NULL;
 	}
@@ -3015,7 +3080,7 @@ static LPSECURITY_ATTRIBUTES mksec(const char *dname, uint8_t bus_number, uint8_
 		applog(LOG_ERR,
 			"MTX: %s (%d:%d) USB failed to secdes grp err (%d)",
 			dname, (int)bus_number, (int)device_address,
-			GetLastError());
+			(int)GetLastError());
 		FreeSid(gsid);
 		free(sec_des);
 		return NULL;
@@ -3060,7 +3125,7 @@ static bool resource_lock(const char *dname, uint8_t bus_number, uint8_t device_
 	if (usbMutex == NULL) {
 		applog(LOG_ERR,
 			"MTX: %s USB failed to get '%s' err (%d)",
-			dname, name, GetLastError());
+			dname, name, (int)GetLastError());
 		sec = unsec(sec);
 		return false;
 	}
@@ -3084,7 +3149,7 @@ static bool resource_lock(const char *dname, uint8_t bus_number, uint8_t device_
 					}
 					applog(LOG_ERR,
 						"MTX: %s USB can't get '%s' - device in use - failure (%d)",
-						dname, name, GetLastError());
+						dname, name, (int)GetLastError());
 					goto fail;
 				}
 			}
@@ -3098,12 +3163,12 @@ static bool resource_lock(const char *dname, uint8_t bus_number, uint8_t device_
 		case WAIT_FAILED:
 			applog(LOG_ERR,
 				"MTX: %s USB failed to get '%s' err (%d)",
-				dname, name, GetLastError());
+				dname, name, (int)GetLastError());
 			goto fail;
 		default:
 			applog(LOG_ERR,
 				"MTX: %s USB failed to get '%s' unknown reply (%d)",
-				dname, name, res);
+				dname, name, (int)res);
 			goto fail;
 	}
 
@@ -3119,8 +3184,9 @@ fail:
 	struct semid_ds seminfo;
 	union semun opt;
 	char name[64];
-	key_t key;
-	int fd, sem, count;
+	key_t *key;
+	int *sem;
+	int fd, count;
 
 	if (is_in_use_bd(bus_number, device_address))
 		return false;
@@ -3131,25 +3197,34 @@ fail:
 		applog(LOG_ERR,
 			"SEM: %s USB open failed '%s' err (%d) %s",
 			dname, name, errno, strerror(errno));
-		return false;
+		goto _out;
 	}
 	close(fd);
-	key = ftok(name, 'K');
-	sem = semget(key, 1, IPC_CREAT | IPC_EXCL | 438);
-	if (sem < 0) {
+
+	key = malloc(sizeof(*key));
+	if (unlikely(!key))
+		quit(1, "SEM: Failed to malloc key");
+
+	sem = malloc(sizeof(*sem));
+	if (unlikely(!sem))
+		quit(1, "SEM: Failed to malloc sem");
+
+	*key = ftok(name, 'K');
+	*sem = semget(*key, 1, IPC_CREAT | IPC_EXCL | 438);
+	if (*sem < 0) {
 		if (errno != EEXIST) {
 			applog(LOG_ERR,
 				"SEM: %s USB failed to get '%s' err (%d) %s",
 				dname, name, errno, strerror(errno));
-			return false;
+			goto free_out;
 		}
 
-		sem = semget(key, 1, 0);
-		if (sem < 0) {
+		*sem = semget(*key, 1, 0);
+		if (*sem < 0) {
 			applog(LOG_ERR,
 				"SEM: %s USB failed to access '%s' err (%d) %s",
 				dname, name, errno, strerror(errno));
-			return false;
+			goto free_out;
 		}
 
 		opt.buf = &seminfo;
@@ -3159,14 +3234,14 @@ fail:
 			if (count > 99) {
 				applog(LOG_ERR,
 					"SEM: %s USB timeout waiting for (%d) '%s'",
-					dname, sem, name);
-				return false;
+					dname, *sem, name);
+				goto free_out;
 			}
-			if (semctl(sem, 0, IPC_STAT, opt) == -1) {
+			if (semctl(*sem, 0, IPC_STAT, opt) == -1) {
 				applog(LOG_ERR,
 					"SEM: %s USB failed to wait for (%d) '%s' count %d err (%d) %s",
-					dname, sem, name, count, errno, strerror(errno));
-				return false;
+					dname, *sem, name, count, errno, strerror(errno));
+				goto free_out;
 			}
 			if (opt.buf->sem_otime != 0)
 				break;
@@ -3179,22 +3254,29 @@ fail:
 		{ 0, 1, IPC_NOWAIT | SEM_UNDO }
 	};
 
-	if (semop(sem, sops, 2)) {
+	if (semop(*sem, sops, 2)) {
 		if (errno == EAGAIN) {
 			if (!hotplug_mode)
 				applog(LOG_WARNING,
 					"SEM: %s USB failed to get (%d) '%s' - device in use",
-					dname, sem, name);
+					dname, *sem, name);
 		} else {
 			applog(LOG_DEBUG,
 				"SEM: %s USB failed to get (%d) '%s' err (%d) %s",
-				dname, sem, name, errno, strerror(errno));
+				dname, *sem, name, errno, strerror(errno));
 		}
-		return false;
+		goto free_out;
 	}
 
 	add_in_use(bus_number, device_address);
+	in_use_store_ress(bus_number, device_address, (void *)key, (void *)sem);
 	return true;
+
+free_out:
+	free(sem);
+	free(key);
+_out:
+	return false;
 #endif
 }
 
@@ -3219,7 +3301,7 @@ static void resource_unlock(const char *dname, uint8_t bus_number, uint8_t devic
 	if (!ReleaseMutex(usbMutex))
 		applog(LOG_ERR,
 			"MTX: %s USB failed to release '%s' err (%d)",
-			dname, name, GetLastError());
+			dname, name, (int)GetLastError());
 
 fila:
 
@@ -3231,27 +3313,15 @@ fila:
 	return;
 #else
 	char name[64];
-	key_t key;
-	int fd, sem;
+	key_t *key = NULL;
+	int *sem = NULL;
 
 	sprintf(name, "/tmp/cgminer-usb-%d-%d", (int)bus_number, (int)device_address);
-	fd = open(name, O_CREAT|O_RDONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
-	if (fd == -1) {
-		applog(LOG_ERR,
-			"SEM: %s USB open failed '%s' for release err (%d) %s",
-			dname, name, errno, strerror(errno));
-		return;
-	}
-	close(fd);
-	key = ftok(name, 'K');
 
-	sem = semget(key, 1, 0);
-	if (sem < 0) {
-		applog(LOG_ERR,
-			"SEM: %s USB failed to get '%s' for release err (%d) %s",
-			dname, name, errno, strerror(errno));
-		return;
-	}
+	in_use_get_ress(bus_number, device_address, (void **)(&key), (void **)(&sem));
+
+	if (!key || !sem)
+		goto fila;
 
 	struct sembuf sops[] = {
 		{ 0, -1, SEM_UNDO }
@@ -3261,12 +3331,22 @@ fila:
 	// exceeding this timeout means it would probably never succeed anyway
 	struct timespec timeout = { 0, 10000000 };
 
-	if (semtimedop(sem, sops, 1, &timeout)) {
+	if (semtimedop(*sem, sops, 1, &timeout)) {
 		applog(LOG_ERR,
 			"SEM: %s USB failed to release '%s' err (%d) %s",
 			dname, name, errno, strerror(errno));
 	}
 
+	if (semctl(*sem, 0, IPC_RMID)) {
+		applog(LOG_WARNING,
+			"SEM: %s USB failed to remove SEM '%s' err (%d) %s",
+			dname, name, errno, strerror(errno));
+	}
+
+fila:
+
+	free(sem);
+	free(key);
 	remove_in_use(bus_number, device_address);
 	return;
 #endif

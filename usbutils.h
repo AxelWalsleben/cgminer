@@ -142,6 +142,7 @@ struct usb_find_devices {
 	int config;
 	int interface;
 	unsigned int timeout;
+	uint16_t wMaxPacketSize;
 	uint16_t latency;
 	int epcount;
 	struct usb_endpoints *eps;
@@ -199,6 +200,12 @@ struct cg_usb_info {
 	 * to avoid devices disappearing while in use by multiple threads
 	 */
 	pthread_rwlock_t *devlock;
+
+	time_t last_pipe;
+	uint64_t pipe_count;
+	uint64_t clear_err_count;
+	uint64_t retry_err_count;
+	uint64_t clear_fail_count;
 };
 
 enum usb_cmds {
