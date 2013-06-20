@@ -989,7 +989,7 @@ static bool dominator_fpga_upload_bitstream(int fd, const char *devpath)
 		    f = write(fd, buf, 1);
 		  	f = myserial_read(fd, buf, 3);
 
-	applog(LOG_DEBUG,"Fpga States after Clear: %0.2x %0.2x %0.2x",buf[0],buf[1],buf[2]);
+	applog(LOG_DEBUG,"Fpga States after Clear: %02x %02x %02x",buf[0],buf[1],buf[2]);
 	applog(LOG_ERR,"Loading %s", devpath);
 
 	FILE *fp = open_bitstream("dominator", fwfile);
@@ -1051,7 +1051,7 @@ static bool dominator_fpga_upload_bitstream(int fd, const char *devpath)
 	if (myserial_read(fd, buf, 3) != 3)
 		applog(LOG_ERR, "FPGA Load Finalize failed");
 	if ((buf[0] != 0xFF) || (buf[1] != 0xFF) || (buf[2] != 0x80)) {
-		applog(LOG_ERR,"Fpga States after Loading: %0.2x %0.2x %0.2x",buf[0],buf[1],buf[2]);
+		applog(LOG_ERR,"Fpga States after Loading: %02x %02x %02x",buf[0],buf[1],buf[2]);
 		
 		return false;
 	} 
@@ -1182,7 +1182,6 @@ static bool dominator_thread_prepare(struct thr_info *thr)
             dominator->workingon[i] = false;
             dominator->has_restart[i] = true;
             dominator->is_disabled[i] = true;
-            dominator->mydiff[i] = 0;
             dominator->numnonces[i] = 0;
             dominator->errorcount[i] = 0;
             for (y=0; y<250; y++) dominator->errorrate[i][y] = 0;
@@ -1236,10 +1235,8 @@ static int64_t dominator_scanhash(struct thr_info *thr)
                                 if (y == 0xFFFFFFFF) {
                                     dominator->errorcount[i]++;
                                 } else {
-                                    dominator->mydiff[y]++;
                                     dominator->numnonces[i]++;
                                 }
-                                works[start_count+i]->mydiff = y;
                                 if (!submit_nonce(thr, works[start_count+i], nonce)) {
                                     if (lastnonce == nonce) {
                                         dominator->is_disabled[i] = false;

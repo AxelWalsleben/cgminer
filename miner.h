@@ -427,6 +427,29 @@ struct cgminer_pool_stats {
 	uint64_t net_bytes_received;
 };
 
+#ifdef USE_DOMINATOR
+enum tapState_t {
+    TEST_LOGIC_RESET=0,
+    RUN_TEST_IDLE=1,
+    SELECT_DR_SCAN=2,
+    CAPTURE_DR=3,
+    SHIFT_DR=4,
+    EXIT1_DR=5,
+    PAUSE_DR=6,
+    EXIT2_DR=7,
+    UPDATE_DR=8,
+    SELECT_IR_SCAN=9,
+    CAPTURE_IR=10,
+    SHIFT_IR=11,
+    EXIT1_IR=12,
+    PAUSE_IR=13,
+    EXIT2_IR=14,
+    UPDATE_IR=15,
+    UNKNOWN_STATE=999
+ };
+ 
+#endif
+
 struct cgpu_info {
 	int cgminer_id;
 	struct device_drv *drv;
@@ -442,6 +465,37 @@ struct cgpu_info {
 		struct cg_usb_device *usbdev;
 #endif
 	};
+#ifdef USE_DOMINATOR
+  struct ftdi_context *ftdi_handle;
+	struct ftdi_context *ftdi_channel_b;
+  uint32_t fpgaid;
+  uint32_t chainlength;
+  struct work **works;
+  int work_array;
+  int queued;
+  int results;
+	int buflen;
+	uint32_t bptr;
+	uint32_t tms_len;
+	unsigned char usbuf[4096];
+	unsigned char tms_buf[128];
+	enum tapState_t current_state;
+	enum tapState_t postDRState;
+	enum tapState_t postIRState;
+	uint32_t deviceIndex;
+	bool shiftDRincomplete;
+	uint32_t numDevices;
+	uint32_t nonces[16];
+	uint32_t clocks[16];
+	bool workingon[16];
+	bool has_restart[16];
+	bool is_disabled[16];
+	uint32_t mydiff[16];
+	double numnonces[16];
+	double errorcount[16];
+	double errorrate[16][250];
+  int device_fd;
+#endif	
 #ifdef USE_AVALON
 	struct work **works;
 	int work_array;
@@ -467,9 +521,9 @@ struct cgpu_info {
 	bool polling;
 	bool flash_led;
 #endif /* USE_BITFORCE */
-#if defined(USE_BITFORCE) || defined(USE_BFLSC)
+#if defined(USE_BITFORCE) || defined(USE_BFLSC) || defined(USE_DOMINATOR)
 	pthread_mutex_t device_mutex;
-#endif /* USE_BITFORCE || USE_BFLSC */
+#endif /* USE_BITFORCE || USE_BFLSC || USE_DOMINATOR */
 	enum dev_enable deven;
 	int accepted;
 	int rejected;
