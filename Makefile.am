@@ -96,6 +96,7 @@ endif
 
 if HAS_DOMINATOR
 cgminer_SOURCES += driver-dominator.c
+cgminer_LDADD   += -lusb -lftdi
 bitstreamsdir = $(bindir)/bitstreams
 dist_bitstreams_DATA = $(top_srcdir)/bitstreams/*
 endif

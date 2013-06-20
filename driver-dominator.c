@@ -1,6 +1,7 @@
 /*
  * Copyright 2012 Andrew Smith
  * Copyright 2012 Luke Dashjr
+ * Copyright 2013 Axel Walsleben
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -27,7 +28,7 @@
 #include <fcntl.h> // File control definitions
 #include <termios.h> // POSIX terminal control definitionss
 
-#include "ftdi.h"
+#include "ftdi.h" 
 
 #define BITSTREAM_FILENAME "dominator.bit"
 
@@ -1231,7 +1232,6 @@ static int64_t dominator_scanhash(struct thr_info *thr)
 // 			applog(LOG_ERR, "nonce %d-%d %08x",i,i,nonce);
                         if ((nonce != 0x00) && ((nonce & 0xFFFFFFF0) != 0xFFFFFFF0) && (first_try != 0)){
                             if (!dominator->has_restart[i]) {
-                                y = check_diff_nonce(thr, works[start_count+i], nonce);
                                 if (y == 0xFFFFFFFF) {
                                     dominator->errorcount[i]++;
                                 } else {
