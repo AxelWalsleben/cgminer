@@ -93,3 +93,11 @@ cgminer_SOURCES += driver-ztex.c libztex.c libztex.h
 bitstreamsdir = $(bindir)/bitstreams
 dist_bitstreams_DATA = $(top_srcdir)/bitstreams/*
 endif
+
+if HAS_DOMINATOR
+cgminer_SOURCES += driver-dominator.c
+bitstreamsdir = $(bindir)/bitstreams
+dist_bitstreams_DATA = $(top_srcdir)/bitstreams/*
+endif
+
+

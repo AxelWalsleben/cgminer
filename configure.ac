@@ -279,6 +279,18 @@ if test "x$ztex" = xyes; then
 fi
 AM_CONDITIONAL([HAS_ZTEX], [test x$ztex = xyes])
 
+dominator="yes"
+
+AC_ARG_ENABLE([dominator],
+        [AC_HELP_STRING([--enable-dominator],[Compile support for Domaintor FPGAs(default disabled)])],
+        [dominator=$enableval]
+        )
+if test "x$dominator" = xyes; then
+        AC_DEFINE([USE_DOMINATOR], [1], [Defined to 1 if Dominator support is wanted])
+fi
+AM_CONDITIONAL([HAS_DOMINATOR], [test x$dominator = xyes])
+
+
 curses="auto"
 
 AC_ARG_WITH([curses],
@@ -303,14 +315,14 @@ else
 	])
 fi
 
-AM_CONDITIONAL([NEED_FPGAUTILS], [test x$modminer$ztex != xnono])
-AM_CONDITIONAL([NEED_USBUTILS_C], [test x$avalon$bitforce$modminer$bflsc$icarus != xnonononono])
+AM_CONDITIONAL([NEED_FPGAUTILS], [test x$modminer$ztex$dominator != xnonono])
+AM_CONDITIONAL([NEED_USBUTILS_C], [test x$avalon$bitforce$modminer$bflsc$icarus$dominator != xnononononono])
 AM_CONDITIONAL([HAVE_CURSES], [test x$curses = xyes])
 AM_CONDITIONAL([WANT_JANSSON], [test x$request_jansson = xtrue])
 AM_CONDITIONAL([HAVE_WINDOWS], [test x$have_win32 = xtrue])
 AM_CONDITIONAL([HAVE_x86_64], [test x$have_x86_64 = xtrue])
 
-if test "x$avalon$bitforce$modminer$bflsc$icarus" != xnonononono; then
+if test "x$avalon$bitforce$modminer$bflsc$icarus$dominator" != xnononononono; then
 	AC_DEFINE([USE_USBUTILS], [1], [Defined to 1 if usbutils support required])
 fi
 
@@ -333,7 +345,7 @@ if test "x$have_cgminer_sdk" = "xtrue"; then
 	PKG_CONFIG_PATH="$CGMINER_SDK/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 fi
 
-if test "x$avalon$ztex$modminer$bitforce$bflsc$icarus" != xnononononono; then
+if test "x$avalon$ztex$modminer$bitforce$bflsc$icarus$dominator" != xnonononononono; then
   case $target in
     *-*-freebsd*)
       LIBUSB_LIBS="-lusb"
@@ -457,14 +469,14 @@ if test "x$opencl" != xno; then
 
 	else
 		echo "  OpenCL...............: NOT FOUND. GPU mining support DISABLED"
-		if test "x$bitforce$avalon$icarus$ztex$modminer$bflsc" = xnononononono; then
+		if test "x$bitforce$avalon$icarus$ztex$modminer$bflsc$dominator" = xnonononononono; then
 			AC_MSG_ERROR([No mining configured in])
 		fi
 		echo "  scrypt...............: Disabled (needs OpenCL)"
 	fi
 else
 	echo "  OpenCL...............: Detection overrided. GPU mining support DISABLED"
-	if test "x$bitforce$icarus$avalon$ztex$modminer$bflsc" = xnononononono; then
+	if test "x$bitforce$icarus$avalon$ztex$modminer$bflsc$dominator" = xnonononononono; then
 		AC_MSG_ERROR([No mining configured in])
 	fi
 	echo "  scrypt...............: Disabled (needs OpenCL)"
@@ -515,6 +527,12 @@ if test "x$ztex" = xyes; then
 	echo "  Ztex.FPGAs...........: Enabled"
 else
 	echo "  Ztex.FPGAs...........: Disabled"
+fi
+
+if test "x$dominator" = xyes; then
+        echo "  Dominator.FPGAs......: Enabled"
+else
+        echo "  Dominator.FPGAs......: Disabled"
 fi
 
 echo
