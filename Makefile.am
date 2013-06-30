@@ -101,4 +101,11 @@ bitstreamsdir = $(bindir)/bitstreams
 dist_bitstreams_DATA = $(top_srcdir)/bitstreams/*
 endif
 
+if HAS_ARTIX
+cgminer_SOURCES += driver-artix.c
+bitstreamsdir = $(bindir)/bitstreams
+dist_bitstreams_DATA = $(top_srcdir)/bitstreams/*
+endif
+
+
 

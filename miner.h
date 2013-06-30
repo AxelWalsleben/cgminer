@@ -427,7 +427,7 @@ struct cgminer_pool_stats {
 	uint64_t net_bytes_received;
 };
 
-#ifdef USE_DOMINATOR
+#if defined(USE_DOMINATOR) || defined(USE_ARTIX)
 enum tapState_t {
     TEST_LOGIC_RESET=0,
     RUN_TEST_IDLE=1,
@@ -450,6 +450,7 @@ enum tapState_t {
  
 #endif
 
+
 struct cgpu_info {
 	int cgminer_id;
 	struct device_drv *drv;
@@ -465,7 +466,7 @@ struct cgpu_info {
 		struct cg_usb_device *usbdev;
 #endif
 	};
-#ifdef USE_DOMINATOR
+#if defined(USE_DOMINATOR) || defined(USE_ARTIX)
   struct ftdi_context *ftdi_handle;
 	struct ftdi_context *ftdi_channel_b;
   uint32_t fpgaid;
@@ -521,7 +522,7 @@ struct cgpu_info {
 	bool polling;
 	bool flash_led;
 #endif /* USE_BITFORCE */
-#if defined(USE_BITFORCE) || defined(USE_BFLSC) || defined(USE_DOMINATOR)
+#if defined(USE_BITFORCE) || defined(USE_BFLSC) || defined(USE_DOMINATOR) || defined(USE_ARTIX)
 	pthread_mutex_t device_mutex;
 #endif /* USE_BITFORCE || USE_BFLSC || USE_DOMINATOR */
 	enum dev_enable deven;

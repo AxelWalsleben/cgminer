@@ -62,7 +62,7 @@
 	#include <sys/wait.h>
 #endif
 
-#if defined(USE_BITFORCE) || defined(USE_ICARUS) || defined(USE_AVALON) || defined(USE_MODMINER)
+#if defined(USE_BITFORCE) || defined(USE_ICARUS) || defined(USE_AVALON) || defined(USE_MODMINER) ||defined(USE_ARTIX)
 #	define USE_FPGA
 #elif defined(USE_ZTEX)
 #	define USE_FPGA
@@ -1392,6 +1392,10 @@ static char *opt_verusage_and_exit(const char *extra)
 #ifdef USE_SCRYPT
 		"scrypt "
 #endif
+#ifdef USE_ARTIX
+                "artix "
+#endif
+
 		"mining support.\n"
 		, packagename);
 	printf("%s", opt_usage(opt_argv0, extra));
@@ -6994,6 +6998,10 @@ extern struct device_drv modminer_drv;
 extern struct device_drv ztex_drv;
 #endif
 
+#ifdef USE_ARTIX
+extern struct device_drv artix_drv;
+#endif
+
 static int cgminer_id_count = 0;
 
 /* Various noop functions for drivers that don't support or need their
@@ -7494,6 +7502,11 @@ int main(int argc, char *argv[])
 		opencl_drv.drv_detect();
 	gpu_threads = 0;
 #endif
+
+#ifdef USE_ARTIX
+        if (!opt_scrypt)
+                artix_drv.drv_detect();
+#endif 
 
 #ifdef USE_ICARUS
 	if (!opt_scrypt)
