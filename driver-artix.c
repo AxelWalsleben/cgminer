@@ -38,10 +38,14 @@ static const char *device = "/dev/spidev0.0";
 
 #define TX_BUF (4096)
 
-#define MAXnumDevices 1000
+#define SPI_BUS_SPEED 5000000
+#define SPI_BUS_BITS 8
+#define SPI_BUS_DELAY 0
+
+#define MAXnumDevices 10
 
 #define BLOCK_SIZE 65536
-#define CHUNK_SIZE 128
+#define CHUNK_SIZE 1024
 #define TICK_COUNT 2048
 
 typedef unsigned char byte;
@@ -64,51 +68,50 @@ unsigned long byteArrayToLong(const byte *b){
       ((unsigned long)b[1]<<8)+(unsigned long)b[0];
   }
   
-void mpsse_send(struct cgpu_info *artix) {
-
-}
-
-void mpsse_add_cmd(struct cgpu_info *artix, unsigned char const *const buf, int const len) {
- /* The TX FIFO has 128 Byte. It can easily be overrun
-    So send only chunks of the TX Buffersize and hope
-    that the OS USB scheduler gives the MPSSE machine 
-    enough time empty the buffer
- */
- if (artix->bptr + len +1 >= TX_BUF)
-//   mpsse_send(artix);
-  memcpy(artix->usbuf + artix->bptr, buf, len);
-  artix->bptr += len;
-}
-
 void tx_tms(struct cgpu_info *artix, unsigned char *pat, int length, int force)
 {
-
+	uint32_t ret;
+	applog(LOG_ERR,"tx_tms");
+	struct spi_ioc_transfer tr = {
+	        .tx_buf = (unsigned long)artix->jtag_buf_tx,
+	        .rx_buf = (unsigned long)artix->jtag_buf_rx,
+	        .len = artix->jtag_len,
+	        .delay_usecs = SPI_BUS_DELAY,
+	        .speed_hz = SPI_BUS_SPEED,
+	        .bits_per_word = SPI_BUS_BITS,
+	};	
+	ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
+  memset(artix->jtag_buf_tx,  0x88, CHUNK_SIZE);
+  artix->jtag_buf_tx[0] = 0x10; // Add JTAG CMD Header
+  artix->jtag_len = 1;
 }
 
 void flush_tms(struct cgpu_info *artix, int force)
 {
-  if (artix->tms_len)
-    tx_tms(artix, artix->tms_buf, artix->tms_len, force);
-  memset(artix->tms_buf,   0,CHUNK_SIZE);
-  artix->tms_len = 0;
+	uint32_t y;
+	applog(LOG_DEBUG, "flush_tms");
+  memset(artix->jtag_buf_tx,  0x88, CHUNK_SIZE);
+  artix->jtag_buf_tx[0] = 0x10; // Add JTAG CMD Header
+  artix->jtag_len = 1;
 }
 
 void set_tms(struct cgpu_info *artix, bool val)
 {
-  if( artix->tms_len + 1 > CHUNK_SIZE*8)
-    flush_tms(artix, false);
-  if(val)
-    artix->tms_buf[artix->tms_len/8] |= (1 <<(artix->tms_len &0x7));
-  artix->tms_len++;
+  artix->tms = val;
+  artix->jtag_buf_tx[artix->jtag_len] = 0x20;
+  if(artix->tms) artix->jtag_buf_tx[artix->jtag_len] |= 0x44; // Set TMS Value
+	if(artix->tdo) artix->jtag_buf_tx[artix->jtag_len] |= 0x11; // Set TDO Value
+  artix->jtag_len++;
 }
 
 void tapTestLogicReset(struct cgpu_info *artix)
 {
   int i;
+  flush_tms(artix, true);
   for(i=0; i<5; i++)
       set_tms(artix, true);
   artix->current_state=TEST_LOGIC_RESET;
-  flush_tms(artix, true);
+ 
 }
 
 void setTapState(struct cgpu_info *artix, enum tapState_t state, int pre)
@@ -120,11 +123,11 @@ void setTapState(struct cgpu_info *artix, enum tapState_t state, int pre)
     case TEST_LOGIC_RESET:
       switch(state){
       case TEST_LOGIC_RESET:
-	tms=true;
-	break;
+					tms=true;
+					break;
       default:
-	tms=false;
-	artix->current_state=RUN_TEST_IDLE;
+					tms=false;
+					artix->current_state=RUN_TEST_IDLE;
       };
       break;
 
@@ -334,26 +337,93 @@ void setTapState(struct cgpu_info *artix, enum tapState_t state, int pre)
     set_tms(artix, false);
 }
 
-unsigned int readusb(struct cgpu_info *artix, unsigned char * rbuf, unsigned long len)
+void shiftMyTDI(struct cgpu_info *artix, const unsigned char *tdi, int length, bool last)
 {
-
+  uint32_t i, ret;
+	static uint8_t bits = 8;
+	static uint32_t speed = 5000000;
+	static uint16_t delay = 0;
+  
+  if(length==0) return;
+	
+	for (i=0; i<length; i++)
+	{
+		if (tdi) {
+			artix->tdo = (tdi[i/8] >> i%8) & 1;
+		}
+	  if ((i == length-1) && last) artix->tms = true;
+	  artix->jtag_buf_tx[artix->jtag_len] = 0x20;
+	  if(artix->tms) artix->jtag_buf_tx[artix->jtag_len] |= 0x44; // Set TMS Value
+		if(artix->tdo) artix->jtag_buf_tx[artix->jtag_len] |= 0x11; // Set TDO Value
+	  artix->jtag_len++;			
+	}
 }
-
-
-void txrx_block(struct cgpu_info *artix, const unsigned char *tdi, unsigned char *tdo,
-			int length, bool last)
-{
-
-}
-
 
 void shiftTDITDO(struct cgpu_info *artix, const unsigned char *tdi, unsigned char *tdo,
 			 int length, bool last)
 {
+  uint32_t i, ret;
+	static uint8_t bits = 8;
+	static uint32_t speed = 5000000;
+	static uint16_t delay = 0;
+  
   if(length==0) return;
-  flush_tms(artix, false);
-  txrx_block(artix, tdi, tdo, length,last);
-  return;
+	
+	for (i=0; i<length; i++)
+	{
+		if (tdi) {
+			artix->tdo = (tdi[i/8] >> i%8) & 1;
+		}
+	  
+	  artix->jtag_buf_tx[artix->jtag_len] = 0x20;
+	  if(artix->tms) artix->jtag_buf_tx[artix->jtag_len] |= 0x44; // Set TMS Value
+		if(artix->tdo) artix->jtag_buf_tx[artix->jtag_len] |= 0x11; // Set TDO Value
+	  artix->jtag_len++;			
+	}
+	if (last) {
+		applog(LOG_ERR, "last is set");
+		artix->jtag_buf_tx[artix->jtag_len] = 0x88; // Add Dummy Cmd to get last result
+		artix->jtag_len++;
+	
+	for ( i=0; i<artix->jtag_len; i=i+16)
+	{
+		applog(LOG_ERR, "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_tx[i], artix->jtag_buf_tx[i+1],  artix->jtag_buf_tx[i+2], artix->jtag_buf_tx[i+3], artix->jtag_buf_tx[i+4], artix->jtag_buf_tx[i+5], artix->jtag_buf_tx[i+6], artix->jtag_buf_tx[i+7], artix->jtag_buf_tx[i+8], artix->jtag_buf_tx[i+9], artix->jtag_buf_tx[i+10], artix->jtag_buf_tx[i+11], artix->jtag_buf_tx[i+12], artix->jtag_buf_tx[i+13], artix->jtag_buf_tx[i+14], artix->jtag_buf_tx[i+15]);
+	}
+	
+		struct spi_ioc_transfer tr = {
+		        .tx_buf = (unsigned long)artix->jtag_buf_tx,
+		        .rx_buf = (unsigned long)artix->jtag_buf_rx,
+		        .len = artix->jtag_len,
+		        .delay_usecs = SPI_BUS_DELAY,
+		        .speed_hz = SPI_BUS_SPEED,
+		        .bits_per_word = SPI_BUS_BITS,
+		};	
+		tr.len = artix->jtag_len;
+		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
+
+	for ( i=0; i<ret; i=i+16)
+	{
+		applog(LOG_ERR, "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_rx[i], artix->jtag_buf_rx[i+1],  artix->jtag_buf_rx[i+2], artix->jtag_buf_rx[i+3], artix->jtag_buf_rx[i+4], artix->jtag_buf_rx[i+5], artix->jtag_buf_rx[i+6], artix->jtag_buf_rx[i+7], artix->jtag_buf_rx[i+8], artix->jtag_buf_rx[i+9], artix->jtag_buf_rx[i+10], artix->jtag_buf_rx[i+11], artix->jtag_buf_rx[i+12], artix->jtag_buf_rx[i+13], artix->jtag_buf_rx[i+14], artix->jtag_buf_rx[i+15]);
+	}
+	
+		  if (tdo) {
+	  	for (i=0; i<length/8; i++)
+	  	{
+	  		tdo[i] = 0x00;
+	  	}
+	  	for (i=0; i<length+1; i++)
+	  	{
+	  		
+	  		tdo[i/8] |= ((artix->jtag_buf_rx[ret-length+i+1] & 1) << i%8);
+	  	}			
+	  }
+	
+	  memset(artix->jtag_buf_tx,  0x88, CHUNK_SIZE);
+	  memset(artix->jtag_buf_rx,  0x00, CHUNK_SIZE);
+	  
+	  artix->jtag_buf_tx[0] = 0x10; // Add JTAG CMD Header
+	  artix->jtag_len = 1;
+	}
 }
 
 void shiftTDI(struct cgpu_info *artix, const unsigned char *tdi, int length, bool last)
@@ -382,13 +452,11 @@ int getChain(struct cgpu_info *artix, bool detect)
       artix->numDevices=0;
       for(i=0; i<4; i++)zero[i]=0;
       do{
-					shiftTDITDO(artix, zero,idx,32,false);
+					shiftTDITDO(artix, zero,idx,32,true);
 					unsigned long id=byteArrayToLong(idx);
-					if(id!=0 && id !=0xffffffff){
+					applog(LOG_ERR, "Getchain %d, %08x", artix->numDevices, id);
+					if(id==0x13631093){
 					  artix->numDevices++;
-//					  chainParam_t dev;
-//					  dev.idcode=id;
-//					  devices.insert(devices.begin(),dev);
 					}
 					else{
 					  if (id == 0xffffffff && artix->numDevices >0)
@@ -408,7 +476,7 @@ int getChain(struct cgpu_info *artix, bool detect)
 int SelectDevice(struct cgpu_info *artix, int dev) {
   if(dev>=artix->numDevices)artix->deviceIndex=-1;
   	else artix->deviceIndex=dev;
-	applog(LOG_DEBUG,"selectDevices %d", artix->deviceIndex);
+	applog(LOG_ERR,"selectDevice %d", artix->deviceIndex);
   return artix->deviceIndex;	
 }
 
@@ -432,11 +500,12 @@ void shift(struct cgpu_info *artix, bool tdi, int length, bool last)
 {
     int len = length;
     unsigned char *block = (tdi)?ones:zeros;
-    flush_tms(artix, false);
-    while (len > CHUNK_SIZE*8)
+    applog(LOG_ERR, "shift");
+//    flush_tms(artix, false);
+    while (len > CHUNK_SIZE)
     {
-	txrx_block(artix, block, NULL, CHUNK_SIZE*8, false);
-	len -= (CHUNK_SIZE*8);
+			shiftTDITDO(artix, block, NULL, CHUNK_SIZE, false);
+			len -= (CHUNK_SIZE);
     }
     shiftTDITDO(artix, block, NULL, len, last);
 }
@@ -444,6 +513,7 @@ void shift(struct cgpu_info *artix, bool tdi, int length, bool last)
 void shiftDR(struct cgpu_info *artix, const byte *tdi, byte *tdo, int length,
 		   int align, bool exit)
 {
+  applog(LOG_ERR, "shiftDR");
   if(artix->deviceIndex<0)return;
   int post=artix->deviceIndex;
 
@@ -458,12 +528,14 @@ void shiftDR(struct cgpu_info *artix, const byte *tdi, byte *tdo, int length,
     setTapState(artix, SHIFT_DR,pre);
   }
 
-  if(tdi!=0&&tdo!=0) shiftTDITDO(artix, tdi,tdo,length,post==0&&exit);
-  else if(tdi!=0&&tdo==0) shiftTDI(artix, tdi,length,post==0&&exit);
-  else if(tdi==0&&tdo!=0) shiftTDO(artix, tdo,length,post==0&&exit);
-  else  shift(artix, false,length,post==0&&exit);
+  if(tdi!=0&&tdo!=0) shiftTDITDO(artix, tdi,tdo,length,false);
+  else if(tdi!=0&&tdo==0) shiftTDI(artix, tdi,length,false);
+  else if(tdi==0&&tdo!=0) shiftTDO(artix, tdo,length,false);
+  else  shift(artix, false,length,false);
 
-  nextTapState(artix, post==0&&exit); // If TMS is set the the state of the tap changes
+	shiftTDITDO(artix, NULL,tdo,length,true);
+  nextTapState(artix, false); // If TMS is set the the state of the tap changes
+  
   if(exit){
      shift(artix, false,post, true);
     if (!(post==0&&exit))
@@ -477,6 +549,7 @@ void shiftDR(struct cgpu_info *artix, const byte *tdi, byte *tdo, int length,
 
 void shiftIR(struct cgpu_info *artix, const byte *tdi, byte *tdo)
 {
+  applog(LOG_ERR, "shiftIR");
   if(artix->deviceIndex<0)return;
   setTapState(artix, SHIFT_IR, 0);
 
@@ -488,9 +561,9 @@ void shiftIR(struct cgpu_info *artix, const byte *tdi, byte *tdo)
   for(dev=0; dev<artix->deviceIndex; dev++)
     post+= 6; // Calculate number of post BYPASS bits.
   shift(artix, true,pre,false);
-  if(tdo!=0) shiftTDITDO(artix, tdi,tdo, 6,post==0);
-    else if(tdo==0) shiftTDI(artix, tdi, 6,post==0);
-  shift(artix, true,post, true);
+  if(tdo!=0) shiftTDITDO(artix, tdi,tdo, 6, false);
+    else if(tdo==0) shiftTDI(artix, tdi, 6, false);
+  shift(artix, true,post, false);
   nextTapState(artix, true);
   setTapState(artix, artix->postIRState, 0);
 }
@@ -531,10 +604,33 @@ long peek(struct cgpu_info *artix, int addr) {
 }
 
 long getUsercode(struct cgpu_info *artix) {
-        byte mydata[8];
+	applog(LOG_ERR, "getUSercode");
+	uint32_t i;
+        byte mydata[512];
+
         mydata[0] = 0x08;
-        shiftIR(artix, mydata, 0);
-        shiftDR(artix, 0, mydata, 32, 0, true);
+	for(i=0; i<5; i++)  set_tms(artix, true); // Reset TAP Controller
+	set_tms(artix, false); // Jetzt zum Shift-IR
+	set_tms(artix, true);
+	set_tms(artix, true);
+	set_tms(artix, false);
+	set_tms(artix, false);
+	for (i=0; i<artix->numDevices-1; i++)
+	{
+		shiftMyTDI(artix, mydata, 6, false);	// Alle mit Load UserCode laden
+	}
+	shiftMyTDI(artix, mydata, 6, true);	// Alle mit Load UserCode geladen und beim letzten bit TMS=1
+	set_tms(artix, true); // Jetzt zum Shift-DR
+	set_tms(artix, true);
+	set_tms(artix, false);
+	set_tms(artix, false);
+	mydata[0] = 0;
+	shiftTDITDO(artix, NULL, mydata, 32*artix->numDevices, true);
+	
+	for (i=0; i<artix->numDevices; i++)
+	{
+		applog(LOG_ERR, "UserIDs %d: %08x",i ,byteArrayToLong(&mydata[i*4]) );
+	}
         return byteArrayToLong(mydata);
 }
 
@@ -543,12 +639,11 @@ static void artix_detect()
 	int fd;
 	int ret = 0;
 	uint8_t mode = 0;
-	uint8_t bits = 8;
-	uint32_t speed = 5000000;
-	uint16_t delay = 0;
 	uint32_t i, y;
 	const char *fwfile = BITSTREAM_FILENAME;
 	struct cgpu_info *artix;
+	uint8_t bits = SPI_BUS_BITS;
+	uint32_t speed = SPI_BUS_SPEED;
 	
 	fd = open(device, O_RDWR);
 	if (fd <0) return;
@@ -609,9 +704,9 @@ static void artix_detect()
                 .tx_buf = (unsigned long)tx,
                 .rx_buf = (unsigned long)rx,
                 .len = txlen,
-                .delay_usecs = delay,
-                .speed_hz = speed,
-                .bits_per_word = bits,
+                .delay_usecs = SPI_BUS_DELAY,
+                .speed_hz = SPI_BUS_SPEED,
+                .bits_per_word = SPI_BUS_BITS,
         };
         tx[0] = 0x00;
         tx[1] = 0x01;
@@ -684,6 +779,7 @@ static void artix_detect()
 		tx[4] = 0xFF;
 		tr.len = 5;
 		ret = ioctl(fd, SPI_IOC_MESSAGE(1), &tr);
+
 		applog(LOG_ERR, "Slot %d Status: %02x", i, rx[4]); 
 		if ((rx[4] & 2) == 2) {
 			artix = calloc(1, sizeof(*artix));
@@ -697,41 +793,23 @@ static void artix_detect()
 		  artix->postIRState = RUN_TEST_IDLE;    
 		  artix->deviceIndex = -1;                           
 		  artix->shiftDRincomplete = false;                 
-		  artix->numDevices  = -1;  
-		  artix->chainlength = 8;                         
+		  artix->tms = false;
+		  artix->tdo = false;                 
+		  artix->numDevices = getChain(artix, true);        
 			add_cgpu(artix);	
+			SelectDevice(artix, 0);
+			applog (LOG_ERR, "ID: %d has Code %08x ", 0, getUsercode(artix));
 		}
-	}	
+	}
 }
 
 static bool artix_thread_prepare(struct thr_info *thr)
 {
 	struct cgpu_info *artix = thr->cgpu;
-        byte mydata [8];
-        int i, y, len;
 	struct timeval now;
-        unsigned char buf[0x100];
         
-	artix->works = calloc(2 * artix->chainlength * sizeof(struct work *), 4); // AVALON_ARRAY_SIZE=4
-        artix->work_array = 0;
 	cgtime(&now);
 	get_datestamp(artix->init, &now);
-        for (i=0; i<artix->chainlength; i++) {
-            SelectDevice(artix, i);
-            artix->nonces[i] = peek(artix, 0x0c);
-//            poke(artix, 0x0d, 175);
-            artix->clocks[i] = peek(artix, 0x0d);
-            artix->workingon[i] = false;
-            artix->has_restart[i] = true;
-            artix->is_disabled[i] = true;
-            artix->numnonces[i] = 0;
-            artix->errorcount[i] = 0;
-            for (y=0; y<250; y++) artix->errorrate[i][y] = 0;
-            applog (LOG_ERR, "ID: %d has Code %08x Clockrate: %08x", i, getUsercode(artix), peek(artix, 0x0d));
-            
-            
-        }
-
   return true;
 }
 
@@ -739,104 +817,8 @@ static int64_t artix_scanhash(struct thr_info *thr)
 {
 	struct cgpu_info *artix = thr->cgpu;
 	struct work **works;
-        int i, tries;
-	uint32_t nonce , lastnonce;
-	int64_t hash_count = 0;
-        static int first_try = 0;
-        int y= 0;
- 	works = artix->works;
-        int start_count = 0;
-	for (i=0; i<artix->chainlength; i++) {
 
-		usleep(20000);
-            SelectDevice(artix, i);
-            if (thr->work_restart) {
-                for (tries=0; tries<(artix->chainlength*2); tries++) {
-                    works[tries]->devflag = true;
-                    artix->has_restart[tries] = true;
-                }
-                break;
-            } else {
-                if (artix->is_disabled[i]) {
-
-                    if (artix->workingon[i] == false) {
-                        start_count = 0;
-                    } else {
-                        start_count = artix->chainlength;
-                    }
-
-                    nonce = 0x00;
-                    tries = 0;
-                    lastnonce = 0xFFFFFFFF;
-                    while (nonce != 0xFFFFFFFF) {
-                        nonce = peek(artix, 0x0e);
-// 			applog(LOG_ERR, "nonce %d-%d %08x",i,i,nonce);
-                        if ((nonce != 0x00) && ((nonce & 0xFFFFFFF0) != 0xFFFFFFF0) && (first_try != 0)){
-                            if (!artix->has_restart[i]) {
-                                if (y == 0xFFFFFFFF) {
-                                    artix->errorcount[i]++;
-                                } else {
-                                    artix->numnonces[i]++;
-                                }
-                                if (!submit_nonce(thr, works[start_count+i], nonce)) {
-                                    if (lastnonce == nonce) {
-                                        artix->is_disabled[i] = false;
-                                        tries = 100;
-                                        applog(LOG_ERR, "Disabling Device: %d", i);
-                                    }
-                                } else {
-                                    tries = 0;
-                                    
-                                }
-                                lastnonce = nonce;
-                            }
-                        }
-                        tries++;
-                        if(tries > 10) break;
-                    }
-
-                    nonce = peek(artix, 0x0c);
-		    if (i==7) applog(LOG_ERR,"nonce %d: %08x",i, nonce);
-                    if (nonce > artix->nonces[i]) hash_count += (nonce - artix->nonces[i]);
-                    if (nonce < artix->nonces[i]) hash_count += (nonce + (0xFFFFFFFF - artix->nonces[i]));
-                    artix->nonces[i] = nonce;
-//		    applog(LOG_ERR, "State %d:%08x", i, peek(artix, 0x0F));
-                    if ((peek(artix, 0x0F) & 0x01) == 0) {
-
-                        artix->has_restart[i] = false;
-                        applog(LOG_DEBUG, "Loading new Work in %d", i);
-                        // Needs new work !
-                        works[start_count+i]->devflag = true;
-                        works[start_count+i]->blk.nonce = 0xffffffff;
-                        artix->workingon[i] = !artix->workingon[i];
-                        if (artix->workingon[i] == false) {
-                            start_count = 0;
-                        } else {
-                            start_count = artix->chainlength;
-                        }
-                        works[start_count+i]->devflag = false;
-			nonce = peek(artix, 0x0c);
-			applog(LOG_ERR, "Startnonce: %d: %08x", i, nonce);
-                        poke(artix, 0x01, byteArrayToLong(&works[start_count+i]->midstate[0]));
-                        poke(artix, 0x02, byteArrayToLong(&works[start_count+i]->midstate[4]));
-                        poke(artix, 0x03, byteArrayToLong(&works[start_count+i]->midstate[8]));
-                        poke(artix, 0x04, byteArrayToLong(&works[start_count+i]->midstate[12]));
-                        poke(artix, 0x05, byteArrayToLong(&works[start_count+i]->midstate[16]));
-                        poke(artix, 0x06, byteArrayToLong(&works[start_count+i]->midstate[20]));
-                        poke(artix, 0x07, byteArrayToLong(&works[start_count+i]->midstate[24]));
-                        poke(artix, 0x08, byteArrayToLong(&works[start_count+i]->midstate[28]));
-
-                        poke(artix, 0x09, byteArrayToLong(&works[start_count+i]->data[64]));
-                        poke(artix, 0x0A, byteArrayToLong(&works[start_count+i]->data[68]));
-                        poke(artix, 0x0B, byteArrayToLong(&works[start_count+i]->data[72]));
-                        works[start_count+i]->subid = i;
-                    }
-                }
-            }
-            	}
-        first_try = 1;
-
-  return hash_count;
+  return 0x01;
 }
 
 static void artix_fpga_shutdown(struct thr_info *thr)
@@ -851,36 +833,12 @@ static void artix_reinit(struct cgpu_info *artix)
 
 }
 
-/* We use a replacement algorithm to only remove references to work done from
- * the buffer when we need the extra space for new work. */
-static bool artix_fill(struct cgpu_info *artix)
-{
-        int i;
-        struct work *work;
-        work = get_queued(artix);
-        if (artix->queued < (artix->chainlength * 2)) {
-            artix->works[artix->queued] = work;
-            artix->queued++;
-            return false;
-        }
-            
-        for (i=0; i< (artix->chainlength * 2); i++) {
-            if (artix->works[i]->devflag) {
-                work_completed(artix, artix->works[i]);
-                artix->works[i] = work;
-                return false;
-            }
-        }
-        return true;
-}
-
 struct device_drv artix_drv = {
 	.dname = "artix",
 	.name = "ART",
 	.drv_detect = artix_detect,
 	.thread_prepare = artix_thread_prepare,
 	.hash_work = hash_queued_work,
-	.queue_full = artix_fill,
 	.scanwork = artix_scanhash,
 	.reinit_device = artix_reinit,
 	.thread_shutdown = artix_fpga_shutdown,

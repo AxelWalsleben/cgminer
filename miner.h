@@ -466,7 +466,7 @@ struct cgpu_info {
 		struct cg_usb_device *usbdev;
 #endif
 	};
-#if defined(USE_DOMINATOR) || defined(USE_ARTIX)
+#ifdef USE_DOMINATOR
   struct ftdi_context *ftdi_handle;
 	struct ftdi_context *ftdi_channel_b;
   uint32_t fpgaid;
@@ -497,6 +497,29 @@ struct cgpu_info {
 	double errorrate[16][250];
   int device_fd;
 #endif	
+
+#ifdef USE_ARTIX
+  struct work **works;
+  int work_array;
+  int queued;
+  int results;
+	int buflen;
+	uint32_t bptr;
+	uint32_t jtag_len;
+	unsigned char jtag_buf_tx[1024];
+	unsigned char jtag_buf_rx[1024];
+	enum tapState_t current_state;
+	enum tapState_t postDRState;
+	enum tapState_t postIRState;
+	uint32_t deviceIndex;
+	bool shiftDRincomplete;
+	uint32_t numDevices;
+	uint32_t nonces[16];
+  int device_fd;
+  bool tms;
+  bool tdo;
+#endif	
+
 #ifdef USE_AVALON
 	struct work **works;
 	int work_array;
