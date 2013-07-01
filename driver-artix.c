@@ -387,15 +387,16 @@ void shiftTDITDO(struct cgpu_info *artix, const unsigned char *tdi, unsigned cha
 	  artix->jtag_len++;			
 	}
 	if (last) {
-		applog(LOG_ERR, "last is set");
+//		applog(LOG_ERR, "last is set");
 		artix->jtag_buf_tx[artix->jtag_len] = 0x88; // Add Dummy Cmd to get last result
 		artix->jtag_len++;
-	
+
+/*	
 	for ( i=0; i<artix->jtag_len; i=i+16)
 	{
 		applog(LOG_ERR, "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_tx[i], artix->jtag_buf_tx[i+1],  artix->jtag_buf_tx[i+2], artix->jtag_buf_tx[i+3], artix->jtag_buf_tx[i+4], artix->jtag_buf_tx[i+5], artix->jtag_buf_tx[i+6], artix->jtag_buf_tx[i+7], artix->jtag_buf_tx[i+8], artix->jtag_buf_tx[i+9], artix->jtag_buf_tx[i+10], artix->jtag_buf_tx[i+11], artix->jtag_buf_tx[i+12], artix->jtag_buf_tx[i+13], artix->jtag_buf_tx[i+14], artix->jtag_buf_tx[i+15]);
 	}
-	
+*/	
 		struct spi_ioc_transfer tr = {
 		        .tx_buf = (unsigned long)artix->jtag_buf_tx,
 		        .rx_buf = (unsigned long)artix->jtag_buf_rx,
@@ -406,12 +407,12 @@ void shiftTDITDO(struct cgpu_info *artix, const unsigned char *tdi, unsigned cha
 		};	
 		tr.len = artix->jtag_len;
 		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
-
+/*
 	for ( i=0; i<ret; i=i+16)
 	{
 		applog(LOG_ERR, "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_rx[i], artix->jtag_buf_rx[i+1],  artix->jtag_buf_rx[i+2], artix->jtag_buf_rx[i+3], artix->jtag_buf_rx[i+4], artix->jtag_buf_rx[i+5], artix->jtag_buf_rx[i+6], artix->jtag_buf_rx[i+7], artix->jtag_buf_rx[i+8], artix->jtag_buf_rx[i+9], artix->jtag_buf_rx[i+10], artix->jtag_buf_rx[i+11], artix->jtag_buf_rx[i+12], artix->jtag_buf_rx[i+13], artix->jtag_buf_rx[i+14], artix->jtag_buf_rx[i+15]);
 	}
-	
+	*/
 		  if (tdo) {
 	  	for (i=0; i<length/8; i++)
 	  	{
@@ -610,13 +611,12 @@ long peek(struct cgpu_info *artix, int addr) {
 }
 
 void myPoke(struct cgpu_info *artix, int addr, long value) {
-        byte mydata[512];
-        byte checksum;
-				uint32_t i, dev;
-
-        applog(LOG_DEBUG, "Poke %d : %08x)", addr, value);
-        mydata[0] = 0x02;
-
+  applog(LOG_ERR, "Poke %d : %08x", addr, value);
+	uint32_t i, dev;
+  byte mydata[512];
+  byte checksum;
+  
+  mydata[0] = 0x02;
 	for(i=0; i<5; i++)  set_tms(artix, true); // Reset TAP Controller
 	set_tms(artix, false); // Jetzt zum Shift-IR
 	set_tms(artix, true);
@@ -630,37 +630,44 @@ void myPoke(struct cgpu_info *artix, int addr, long value) {
   for(dev=0; dev<artix->deviceIndex; dev++)
     shiftMyTDI(artix, ones, 6, false);  // Send post BYPASS bits.
   set_lasttms(artix);
+
 	set_tms(artix, true); // Jetzt zum Shift-DR
 	set_tms(artix, true);
 	set_tms(artix, false);
 	set_tms(artix, false);
 
-        mydata[0]=(byte)(value&0xff);
-    		mydata[1]=(byte)((value>>8)&0xff);
-    		mydata[2]=(byte)((value>>16)&0xff);
-    		mydata[3]=(byte)((value>>24)&0xff);
-        mydata[4] = 0x00;
-        checksum = mydata[0] ^ mydata[1] ^ mydata[2] ^ mydata[3];
-        checksum = (checksum >> 4)  ^ (checksum & 0xF);
-        checksum = (checksum >> 2)  ^ (checksum & 0x3);
-        checksum = (checksum >> 1)  ^ (checksum & 0x1);
-        mydata[4] = ((( (addr >> 3) & 1) ^ ((addr >> 2) & 1) ^ ((addr >> 1) & 1) ^ (addr & 1) ^ (checksum & 1)) << 5 ) | 0x10 | (addr & 0x0F);
+  mydata[0]=(byte)(value&0xff);
+	mydata[1]=(byte)((value>>8)&0xff);
+	mydata[2]=(byte)((value>>16)&0xff);
+	mydata[3]=(byte)((value>>24)&0xff);
+  mydata[4] = 0x00;
+  checksum = mydata[0] ^ mydata[1] ^ mydata[2] ^ mydata[3];
+  checksum = (checksum >> 4)  ^ (checksum & 0xF);
+  checksum = (checksum >> 2)  ^ (checksum & 0x3);
+  checksum = (checksum >> 1)  ^ (checksum & 0x1);
+  mydata[4] = ((( (addr >> 3) & 1) ^ ((addr >> 2) & 1) ^ ((addr >> 1) & 1) ^ (addr & 1) ^ (checksum & 1)) << 5 ) | 0x10 | (addr & 0x0F);
+	
+  for(dev=artix->deviceIndex+1; dev<artix->numDevices; dev++)
+    shiftMyTDI(artix, ones, 1, false);  // Send pre BYPASS bits.
+	shiftMyTDI(artix, mydata, 38, false);	// Alle mit Load UserReg1 laden
+  for(dev=0; dev<artix->deviceIndex; dev++)
+    shiftMyTDI(artix, ones, 1, false);  // Send post BYPASS bits.
+  set_lasttms(artix);
+
+	set_tms(artix, true); // zum Update-DR
+	set_tms(artix, true); // zum Select-DR
+	set_tms(artix, false); // Zum Capture-DR
+	set_tms(artix, false);
 
   for(dev=artix->deviceIndex+1; dev<artix->numDevices; dev++)
     shiftMyTDI(artix, ones, 1, false);  // Send pre BYPASS bits.
-	shiftTDITDO(artix, mydata, NULL, 38, false);	
-	set_lasttms(artix);
-	set_tms(artix, true); // zum Update-DR
-	set_tms(artix, false); // zum Run-Test-Idle
-
-	
-	shiftTDITDO(artix, NULL, mydata, 8, true);	
+	shiftTDITDO(artix, NULL, mydata, 33, true);	
 
 }
 
 
 long myPeek(struct cgpu_info *artix, int addr) {
- 	applog(LOG_DEBUG, "Peek %d", addr);
+ 	applog(LOG_ERR, "Peek %d", addr);
 	uint32_t i, dev;
   byte mydata[512];
 
@@ -908,9 +915,26 @@ static void artix_detect()
 			for (y=0; y<8; y++)
 			{
 				SelectDevice(artix, y);
-				myPoke(artix, 0x02, 0xFFFFFFFF);
-				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x02));
+				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0f));
+				myPoke(artix, 0x01, 0x12345678);
+				myPoke(artix, 0x02, 0x12345678);
+				myPoke(artix, 0x03, 0x12345678);
+				myPoke(artix, 0x04, 0x12345678);
+				myPoke(artix, 0x05, 0x12345678);
+				myPoke(artix, 0x06, 0x12345678);
+				myPoke(artix, 0x07, 0x12345678);
+				myPoke(artix, 0x08, 0x12345678);
+				myPoke(artix, 0x09, 0x12345678);
+				myPoke(artix, 0x0a, 0x12345678);
+				myPoke(artix, 0x0b, 0x12345678);
+				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0c));
 			}
+			usleep(2500000);
+			for (y=0; y<8; y++)
+			{
+				SelectDevice(artix, y);
+				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0c));
+			}			
 		}
 	}
 }
