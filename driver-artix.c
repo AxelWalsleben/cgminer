@@ -595,6 +595,7 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 	tx[3] = 0x01; // Read Status
 	tx[4] = 0xFF;
 	tr.len = 5;
+	mutex_lock(&artix->device_mutex);
 	ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
 	for (i=0; i<artix->numDevices; i++)
 	{
@@ -613,10 +614,14 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
     poke(artix, 0x0B, byteArrayToLong(&work->data[72]));
 		
 	}
+	mutex_unlock(&artix->device_mutex);
+	usleep(1000000);
 	lastnonce = 0;
 	while(1) {
+		mutex_lock(&artix->device_mutex);
 		SelectDevice(artix, 0);
 		nonce = peek(artix, 0x0c);
+
 		if (lastnonce == nonce) { // finished work
 			i=0;
 			SelectDevice(artix, i);
@@ -630,15 +635,17 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 				}
 					
 			}
+			mutex_unlock(&artix->device_mutex);
 			break;
 		} else {
+			mutex_unlock(&artix->device_mutex);
 //			applog(LOG_ERR, "Lastnonce: %08x - %08x", lastnonce, nonce);
-			usleep(10000);	
+			usleep(5000);	
 			lastnonce = nonce;
 		}
 	}
   
-	applog(LOG_ERR, "Block finished");
+	applog(LOG_ERR, "ART%d: Block finished", artix->device_id);
   return 0xFFFFFFFF;
 }
 
