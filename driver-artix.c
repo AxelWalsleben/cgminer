@@ -68,24 +68,6 @@ unsigned long byteArrayToLong(const byte *b){
       ((unsigned long)b[1]<<8)+(unsigned long)b[0];
   }
   
-void tx_tms(struct cgpu_info *artix, unsigned char *pat, int length, int force)
-{
-	uint32_t ret;
-	applog(LOG_ERR,"tx_tms");
-	struct spi_ioc_transfer tr = {
-	        .tx_buf = (unsigned long)artix->jtag_buf_tx,
-	        .rx_buf = (unsigned long)artix->jtag_buf_rx,
-	        .len = artix->jtag_len,
-	        .delay_usecs = SPI_BUS_DELAY,
-	        .speed_hz = SPI_BUS_SPEED,
-	        .bits_per_word = SPI_BUS_BITS,
-	};	
-	ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
-  memset(artix->jtag_buf_tx,  0x88, CHUNK_SIZE);
-  artix->jtag_buf_tx[0] = 0x10; // Add JTAG CMD Header
-  artix->jtag_len = 1;
-}
-
 void flush_tms(struct cgpu_info *artix, int force)
 {
 	uint32_t y;
@@ -116,231 +98,7 @@ void tapTestLogicReset(struct cgpu_info *artix)
   flush_tms(artix, true);
   for(i=0; i<5; i++)
       set_tms(artix, true);
-  artix->current_state=TEST_LOGIC_RESET;
- 
-}
 
-void setTapState(struct cgpu_info *artix, enum tapState_t state, int pre)
-{
-  bool tms;
-  while(artix->current_state!=state){
-    switch(artix->current_state){
-
-    case TEST_LOGIC_RESET:
-      switch(state){
-      case TEST_LOGIC_RESET:
-					tms=true;
-					break;
-      default:
-					tms=false;
-					artix->current_state=RUN_TEST_IDLE;
-      };
-      break;
-
-    case RUN_TEST_IDLE:
-      switch(state){
-      case RUN_TEST_IDLE:
-	tms=false;
-	break;
-      default:
-	tms=true;
-	artix->current_state=SELECT_DR_SCAN;
-      };
-      break;
-
-    case SELECT_DR_SCAN:
-      switch(state){
-      case CAPTURE_DR:
-      case SHIFT_DR:
-      case EXIT1_DR:
-      case PAUSE_DR:
-      case EXIT2_DR:
-      case UPDATE_DR:
-	tms=false;
-	artix->current_state=CAPTURE_DR;
-	break;
-      default:
-	tms=true;
-	artix->current_state=SELECT_IR_SCAN;
-      };
-      break;
-
-    case CAPTURE_DR:
-      switch(state){
-      case SHIFT_DR:
-				tms=false;
-				artix->current_state=SHIFT_DR;
-				break;
-      default:
-				tms=true;
-				artix->current_state=EXIT1_DR;
-      };
-      break;
-
-    case SHIFT_DR:
-      switch(state){
-      case SHIFT_DR:
-				tms=false;
-				break;
-      default:
-				tms=true;
-				artix->current_state=EXIT1_DR;
-      };
-      break;
-
-    case EXIT1_DR:
-      switch(state){
-      case PAUSE_DR:
-      case EXIT2_DR:
-      case SHIFT_DR:
-      case EXIT1_DR:
-				tms=false;
-				artix->current_state=PAUSE_DR;
-				break;
-      default:
-				tms=true;
-				artix->current_state=UPDATE_DR;
-      };
-      break;
-
-    case PAUSE_DR:
-      switch(state){
-      case PAUSE_DR:
-	tms=false;
-	break;
-      default:
-	tms=true;
-	artix->current_state=EXIT2_DR;
-      };
-      break;
-
-    case EXIT2_DR:
-      switch(state){
-      case SHIFT_DR:
-      case EXIT1_DR:
-      case PAUSE_DR:
-	tms=false;
-	artix->current_state=SHIFT_DR;
-	break;
-      default:
-	tms=true;
-	artix->current_state=UPDATE_DR;
-      };
-      break;
-
-    case UPDATE_DR:
-      switch(state){
-      case RUN_TEST_IDLE:
-	tms=false;
-	artix->current_state=RUN_TEST_IDLE;
-	break;
-      default:
-	tms=true;
-	artix->current_state=SELECT_DR_SCAN;
-      };
-      break;
-
-    case SELECT_IR_SCAN:
-      switch(state){
-      case CAPTURE_IR:
-      case SHIFT_IR:
-      case EXIT1_IR:
-      case PAUSE_IR:
-      case EXIT2_IR:
-      case UPDATE_IR:
-	tms=false;
-	artix->current_state=CAPTURE_IR;
-	break;
-      default:
-	tms=true;
-	artix->current_state=TEST_LOGIC_RESET;
-      };
-      break;
-
-    case CAPTURE_IR:
-      switch(state){
-      case SHIFT_IR:
-	tms=false;
-	artix->current_state=SHIFT_IR;
-	break;
-      default:
-	tms=true;
-	artix->current_state=EXIT1_IR;
-      };
-      break;
-
-    case SHIFT_IR:
-      switch(state){
-      case SHIFT_IR:
-	tms=false;
-	break;
-      default:
-	tms=true;
-	artix->current_state=EXIT1_IR;
-      };
-      break;
-
-    case EXIT1_IR:
-      switch(state){
-      case PAUSE_IR:
-      case EXIT2_IR:
-      case SHIFT_IR:
-      case EXIT1_IR:
-	tms=false;
-	artix->current_state=PAUSE_IR;
-	break;
-      default:
-	tms=true;
-	artix->current_state=UPDATE_IR;
-      };
-      break;
-
-    case PAUSE_IR:
-      switch(state){
-      case PAUSE_IR:
-	tms=false;
-	break;
-      default:
-	tms=true;
-	artix->current_state=EXIT2_IR;
-      };
-      break;
-
-    case EXIT2_IR:
-      switch(state){
-      case SHIFT_IR:
-      case EXIT1_IR:
-      case PAUSE_IR:
-	tms=false;
-	artix->current_state=SHIFT_IR;
-	break;
-      default:
-	tms=true;
-	artix->current_state=UPDATE_IR;
-      };
-      break;
-
-    case UPDATE_IR:
-      switch(state){
-      case RUN_TEST_IDLE:
-	tms=false;
-	artix->current_state=RUN_TEST_IDLE;
-	break;
-      default:
-	tms=true;
-	artix->current_state=SELECT_DR_SCAN;
-      };
-      break;
-
-    default:
-      tapTestLogicReset(artix);
-      tms=true;
-    };
-    set_tms(artix, tms);
-  }
-  int i;
-  for(i=0; i<pre; i++)
-    set_tms(artix, false);
 }
 
 void shiftMyTDI(struct cgpu_info *artix, const unsigned char *tdi, int length, bool last)
@@ -438,22 +196,23 @@ void shiftTDI(struct cgpu_info *artix, const unsigned char *tdi, int length, boo
   shiftTDITDO(artix, tdi, NULL, length,last);
 }
 
-// TDI gets a load of zeros, we just record TDO.
 void shiftTDO(struct cgpu_info *artix, unsigned char *tdo, int length, bool last)
 {
     shiftTDITDO(artix, NULL, tdo, length,last);
 }
 
-  
-  
-/* Detect chain length on first start, return chain length else*/
 int getChain(struct cgpu_info *artix, bool detect)
 {
   int i;
   if(artix->numDevices  == -1 || detect)
     {
       tapTestLogicReset(artix);
-      setTapState(artix, SHIFT_DR, 0);
+			
+			set_tms(artix, false); // Jetzt zum Shift-DR
+			set_tms(artix, true);
+			set_tms(artix, false);
+			set_tms(artix, false);
+
       byte idx[4];
       byte zero[4];
       artix->numDevices=0;
@@ -474,7 +233,6 @@ int getChain(struct cgpu_info *artix, bool detect)
 					  break;
 					}
       }while(artix->numDevices<MAXnumDevices);
-      setTapState(artix, TEST_LOGIC_RESET, 0);
     }
   applog(LOG_ERR, "getChain found %d devices",artix->numDevices);
   return artix->numDevices;
@@ -483,135 +241,12 @@ int getChain(struct cgpu_info *artix, bool detect)
 int SelectDevice(struct cgpu_info *artix, int dev) {
   if(dev>=artix->numDevices)artix->deviceIndex=-1;
   	else artix->deviceIndex=dev;
-	applog(LOG_ERR,"selectDevice %d", artix->deviceIndex);
+	applog(LOG_DEBUG,"selectDevice %d", artix->deviceIndex);
   return artix->deviceIndex;	
 }
 
-void nextTapState(struct cgpu_info *artix, bool tms)
-{
-  if(artix->current_state==SHIFT_DR){
-    if(tms)artix->current_state=EXIT1_DR; // If TMS was set then goto next state
-  }
-  else if(artix->current_state==SHIFT_IR){
-    if(tms)artix->current_state=EXIT1_IR; // If TMS was set then goto next state
-  }
-  else 
-    {
-      applog(LOG_ERR,"Unexpected state %d",artix->current_state);
-      tapTestLogicReset(artix); // We were in an unexpected state
-    }
-}
-
-// TDI gets a load of zeros or ones, and we ignore TDO
-void shift(struct cgpu_info *artix, bool tdi, int length, bool last)
-{
-    int len = length;
-    unsigned char *block = (tdi)?ones:zeros;
-    applog(LOG_ERR, "shift");
-//    flush_tms(artix, false);
-    while (len > CHUNK_SIZE)
-    {
-			shiftTDITDO(artix, block, NULL, CHUNK_SIZE, false);
-			len -= (CHUNK_SIZE);
-    }
-    shiftTDITDO(artix, block, NULL, len, last);
-}
-
-void shiftDR(struct cgpu_info *artix, const byte *tdi, byte *tdo, int length,
-		   int align, bool exit)
-{
-  applog(LOG_ERR, "shiftDR");
-  if(artix->deviceIndex<0)return;
-  int post=artix->deviceIndex;
-
-  if(!artix->shiftDRincomplete){
-    int pre=artix->numDevices-artix->deviceIndex-1;
-    if(align){
-      pre=-post;
-      while(pre<=0)pre+=align;
-    }
-    /* We can combine the pre bits to reach the target device with
-     the TMS bits to reach the SHIFT-DR state, as the pre bit can be '0'*/
-    setTapState(artix, SHIFT_DR,pre);
-  }
-
-  if(tdi!=0&&tdo!=0) shiftTDITDO(artix, tdi,tdo,length,false);
-  else if(tdi!=0&&tdo==0) shiftTDI(artix, tdi,length,false);
-  else if(tdi==0&&tdo!=0) shiftTDO(artix, tdo,length,false);
-  else  shift(artix, false,length,false);
-
-	shiftTDITDO(artix, NULL,tdo,length,true);
-  nextTapState(artix, false); // If TMS is set the the state of the tap changes
-  
-  if(exit){
-     shift(artix, false,post, true);
-    if (!(post==0&&exit))
-      nextTapState(artix, true);
-    setTapState(artix, artix->postDRState, 0);
-    artix->shiftDRincomplete=false;
-  }
-  else artix->shiftDRincomplete=true;
-}
-
-
-void shiftIR(struct cgpu_info *artix, const byte *tdi, byte *tdo)
-{
-  applog(LOG_ERR, "shiftIR");
-  if(artix->deviceIndex<0)return;
-  setTapState(artix, SHIFT_IR, 0);
-
-  int pre=0;
-  int dev=0;
-  for(dev=artix->deviceIndex+1; dev<artix->numDevices; dev++)
-    pre+= 6; // Calculate number of pre BYPASS bits.
-  int post=0;
-  for(dev=0; dev<artix->deviceIndex; dev++)
-    post+= 6; // Calculate number of post BYPASS bits.
-  shift(artix, true,pre,false);
-  if(tdo!=0) shiftTDITDO(artix, tdi,tdo, 6, false);
-    else if(tdo==0) shiftTDI(artix, tdi, 6, false);
-  shift(artix, true,post, false);
-  nextTapState(artix, true);
-  setTapState(artix, artix->postIRState, 0);
-}
-
 void poke(struct cgpu_info *artix, int addr, long value) {
-        byte mydata[8];
-        byte checksum;
-//        applog(LOG_DEBUG, "Poke %d : %08x)", addr, value);
-        mydata[0] = 0x02;
-        shiftIR(artix, mydata, 0);
-        mydata[0]=(byte)(value&0xff);
-    		mydata[1]=(byte)((value>>8)&0xff);
-    		mydata[2]=(byte)((value>>16)&0xff);
-    		mydata[3]=(byte)((value>>24)&0xff);
-        mydata[4] = 0x00;
-        checksum = mydata[0] ^ mydata[1] ^ mydata[2] ^ mydata[3];
-        checksum = (checksum >> 4)  ^ (checksum & 0xF);
-        checksum = (checksum >> 2)  ^ (checksum & 0x3);
-        checksum = (checksum >> 1)  ^ (checksum & 0x1);
-        mydata[4] = ((( (addr >> 3) & 1) ^ ((addr >> 2) & 1) ^ ((addr >> 1) & 1) ^ (addr & 1) ^ (checksum & 1)) << 5 ) | 0x10 | (addr & 0x0F);
-        shiftDR(artix, mydata, NULL, 38, 0, true);
-}
-
-long peek(struct cgpu_info *artix, int addr) {
-        byte mydata[8];
-//	applog(LOG_DEBUG, "Peek %d", addr);
-        mydata[0] = 0x02;
-        shiftIR(artix, mydata, 0);
-        mydata[0] = 0X00;
-        mydata[1] = 0x00;
-        mydata[2] = 0x00;
-        mydata[3] = 0x00;
-        mydata[4] = (addr & 0x0f) | ((1 ^ ((addr >> 3) & 1) ^ ((addr >> 2) & 1) ^ ((addr >> 1) & 1) ^ (addr & 1) ) << 5 );
-      
-        shiftDR(artix, mydata, 0, 38, 0, true);
-        shiftDR(artix, 0, mydata, 32, 0, true);
-        return byteArrayToLong(mydata);
-}
-
-void myPoke(struct cgpu_info *artix, int addr, long value) {
-  applog(LOG_ERR, "Poke %d : %08x", addr, value);
+  applog(LOG_DEBUG, "Poke %d : %08x", addr, value);
 	uint32_t i, dev;
   byte mydata[512];
   byte checksum;
@@ -662,12 +297,10 @@ void myPoke(struct cgpu_info *artix, int addr, long value) {
   for(dev=artix->deviceIndex+1; dev<artix->numDevices; dev++)
     shiftMyTDI(artix, ones, 1, false);  // Send pre BYPASS bits.
 	shiftTDITDO(artix, NULL, mydata, 33, true);	
-
 }
 
-
-long myPeek(struct cgpu_info *artix, int addr) {
- 	applog(LOG_ERR, "Peek %d", addr);
+long peek(struct cgpu_info *artix, int addr) {
+ 	applog(LOG_DEBUG, "Peek %d", addr);
 	uint32_t i, dev;
   byte mydata[512];
 
@@ -717,7 +350,7 @@ long myPeek(struct cgpu_info *artix, int addr) {
 }
 
 long getUsercode(struct cgpu_info *artix) {
-	applog(LOG_ERR, "getUSercode");
+//	applog(LOG_ERR, "getUSercode");
 	uint32_t i;
         byte mydata[512];
 
@@ -901,15 +534,14 @@ static void artix_detect()
 			artix->device_fd = fd;
 			artix->deven = DEV_ENABLED;
 			artix->threads = 1;
-		  artix->current_state = UNKNOWN_STATE;        
-		  artix->postDRState = RUN_TEST_IDLE;    
-		  artix->postIRState = RUN_TEST_IDLE;    
 		  artix->deviceIndex = -1;                           
-		  artix->shiftDRincomplete = false;                 
 		  artix->tms = false;
 		  artix->tdo = false;                 
+		  artix->slot = i;
 		  artix->numDevices = getChain(artix, true);        
 			add_cgpu(artix);	
+			getUsercode(artix);
+/*
 			SelectDevice(artix, 0);
 			applog (LOG_ERR, "ID: %d has Code %08x ", 0, getUsercode(artix));
 			for (y=0; y<8; y++)
@@ -929,54 +561,92 @@ static void artix_detect()
 				myPoke(artix, 0x0b, 0x12345678);
 				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0c));
 			}
-			usleep(2500000);
+			usleep(2200000);
 			for (y=0; y<8; y++)
 			{
 				SelectDevice(artix, y);
 				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0c));
 			}			
+*/			
 		}
 	}
 }
 
-static bool artix_thread_prepare(struct thr_info *thr)
+static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t __maybe_unused max_nonce)
 {
 	struct cgpu_info *artix = thr->cgpu;
-	struct timeval now;
-        
-	cgtime(&now);
-	get_datestamp(artix->init, &now);
-  return true;
-}
+	uint32_t nonce, lastnonce;
+  uint8_t tx[16] = {0, };
+  uint8_t rx[16] = {0, };
+	
+  struct spi_ioc_transfer tr = {
+          .tx_buf = (unsigned long)tx,
+          .rx_buf = (unsigned long)rx,
+          .len = 0,
+          .delay_usecs = SPI_BUS_DELAY,
+          .speed_hz = SPI_BUS_SPEED,
+          .bits_per_word = SPI_BUS_BITS,
+  };              
+	uint32_t i;
+	int ret;
+	tx[0] = 0x07; // Bank Select	
+	tx[1] = (1<<artix->slot) & 255;
+	tx[2] = ((1<<artix->slot)>>8) & 3;
+	tx[3] = 0x01; // Read Status
+	tx[4] = 0xFF;
+	tr.len = 5;
+	ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
+	for (i=0; i<artix->numDevices; i++)
+	{
+		SelectDevice(artix, i);
+    poke(artix, 0x01, byteArrayToLong(&work->midstate[0]));
+    poke(artix, 0x02, byteArrayToLong(&work->midstate[4]));
+    poke(artix, 0x03, byteArrayToLong(&work->midstate[8]));
+    poke(artix, 0x04, byteArrayToLong(&work->midstate[12]));
+    poke(artix, 0x05, byteArrayToLong(&work->midstate[16]));
+    poke(artix, 0x06, byteArrayToLong(&work->midstate[20]));
+    poke(artix, 0x07, byteArrayToLong(&work->midstate[24]));
+    poke(artix, 0x08, byteArrayToLong(&work->midstate[28]));
 
-static int64_t artix_scanhash(struct thr_info *thr)
-{
-	struct cgpu_info *artix = thr->cgpu;
-	struct work **works;
-
-  return 0x01;
-}
-
-static void artix_fpga_shutdown(struct thr_info *thr)
-{
-	struct cgpu_info *artix = thr->cgpu;
-
-//	free(thr->cgpu_data);
-}
-
-static void artix_reinit(struct cgpu_info *artix)
-{
-
+    poke(artix, 0x09, byteArrayToLong(&work->data[64]));
+    poke(artix, 0x0A, byteArrayToLong(&work->data[68]));
+    poke(artix, 0x0B, byteArrayToLong(&work->data[72]));
+		
+	}
+	lastnonce = 0;
+	while(1) {
+		SelectDevice(artix, 0);
+		nonce = peek(artix, 0x0c);
+		if (lastnonce == nonce) { // finished work
+			i=0;
+			SelectDevice(artix, i);
+			while (i<artix->numDevices) {
+				nonce = peek(artix, 0x0e);
+				if (nonce != 0xFFFFFFFF) {
+					submit_nonce(thr, work, nonce);	
+				} else {
+					i++;
+					SelectDevice(artix, i);
+				}
+					
+			}
+			break;
+		} else {
+//			applog(LOG_ERR, "Lastnonce: %08x - %08x", lastnonce, nonce);
+			usleep(10000);	
+			lastnonce = nonce;
+		}
+	}
+  
+	applog(LOG_ERR, "Block finished");
+  return 0xFFFFFFFF;
 }
 
 struct device_drv artix_drv = {
 	.dname = "artix",
 	.name = "ART",
 	.drv_detect = artix_detect,
-	.thread_prepare = artix_thread_prepare,
-	.hash_work = hash_queued_work,
-	.scanwork = artix_scanhash,
-	.reinit_device = artix_reinit,
-	.thread_shutdown = artix_fpga_shutdown,
+	.scanhash = artix_scanhash,
+
 
 };

@@ -427,7 +427,7 @@ struct cgminer_pool_stats {
 	uint64_t net_bytes_received;
 };
 
-#if defined(USE_DOMINATOR) || defined(USE_ARTIX)
+#if defined(USE_DOMINATOR)
 enum tapState_t {
     TEST_LOGIC_RESET=0,
     RUN_TEST_IDLE=1,
@@ -499,22 +499,13 @@ struct cgpu_info {
 #endif	
 
 #ifdef USE_ARTIX
-  struct work **works;
-  int work_array;
-  int queued;
-  int results;
-	int buflen;
-	uint32_t bptr;
+  int slot;
+  int deviceIndex;
 	uint32_t jtag_len;
 	unsigned char jtag_buf_tx[1024];
 	unsigned char jtag_buf_rx[1024];
-	enum tapState_t current_state;
-	enum tapState_t postDRState;
-	enum tapState_t postIRState;
-	uint32_t deviceIndex;
-	bool shiftDRincomplete;
 	uint32_t numDevices;
-	uint32_t nonces[16];
+	uint32_t lastnonce;
   int device_fd;
   bool tms;
   bool tdo;
