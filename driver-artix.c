@@ -619,16 +619,20 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 	lastnonce = 0;
 	while(1) {
 		mutex_lock(&artix->device_mutex);
+		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
 		SelectDevice(artix, 0);
 		nonce = peek(artix, 0x0c);
-
 		if (lastnonce == nonce) { // finished work
 			i=0;
 			SelectDevice(artix, i);
 			while (i<artix->numDevices) {
 				nonce = peek(artix, 0x0e);
 				if (nonce != 0xFFFFFFFF) {
-					submit_nonce(thr, work, nonce);	
+//					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, i, nonce);
+					if (!thr->work_restart) {
+						submit_nonce(thr, work, nonce-1);	
+					}
+					
 				} else {
 					i++;
 					SelectDevice(artix, i);
@@ -639,13 +643,13 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 			break;
 		} else {
 			mutex_unlock(&artix->device_mutex);
-//			applog(LOG_ERR, "Lastnonce: %08x - %08x", lastnonce, nonce);
-			usleep(5000);	
+//			applog(LOG_ERR, "ART%d: Lastnonce: %08x - %08x", artix->device_id, lastnonce, nonce);
+			usleep(10000);	
 			lastnonce = nonce;
 		}
 	}
   
-	applog(LOG_ERR, "ART%d: Block finished", artix->device_id);
+//	applog(LOG_ERR, "ART%d: Block finished", artix->device_id);
   return 0xFFFFFFFF;
 }
 
