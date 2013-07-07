@@ -220,7 +220,7 @@ int getChain(struct cgpu_info *artix, bool detect)
       do{
 					shiftTDITDO(artix, zero,idx,32,true);
 					unsigned long id=byteArrayToLong(idx);
-					applog(LOG_ERR, "Getchain %d, %08x", artix->numDevices, id);
+//					applog(LOG_ERR, "Getchain %d, %08x", artix->numDevices, id);
 					if(id==0x13631093){
 					  artix->numDevices++;
 					}
@@ -517,6 +517,8 @@ static void artix_detect()
         free(buffer);
 	
   mutex_init(&artix_mutex);	
+	mutex_lock(&artix_mutex);
+
 	for (i=0; i<10; i++)
 	{
 		tx[0] = 0x07; // Bank Select	
@@ -572,12 +574,14 @@ static void artix_detect()
 */			
 		}
 	}
+	mutex_unlock(&artix_mutex);
+
 }
 
 static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t __maybe_unused max_nonce)
 {
 	struct cgpu_info *artix = thr->cgpu;
-	uint32_t nonce, lastnonce;
+	uint32_t nonce, lastnonce, errorcounter, state;
   uint8_t tx[16] = {0, };
   uint8_t rx[16] = {0, };
 	
@@ -591,6 +595,7 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
   };              
 	uint32_t i;
 	int ret;
+	errorcounter = 0;
 	tx[0] = 0x07; // Bank Select	
 	tx[1] = (1<<artix->slot) & 255;
 	tx[2] = ((1<<artix->slot)>>8) & 3;
@@ -622,14 +627,28 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
 		SelectDevice(artix, thr->id % 8);
 		nonce = peek(artix, 0x0c);
+		state = peek(artix, 0x0f);
+		if ((state & 2) == 0) {
+			applog(LOG_ERR,"ART%d:%d Slot: %d REG: $0F %08x", artix->device_id, thr->id, artix->slot, state);
+		}
+
 		if (lastnonce == nonce) { // finished work
 				nonce = peek(artix, 0x0e);
 				while (nonce != 0xFFFFFFFF) {
 //					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, i, nonce);
-					if (!thr->work_restart) {
-						submit_nonce(thr, work, nonce);	
+					if (nonce != 0x00000000) {
+						if (!thr->work_restart) {
+							submit_nonce(thr, work, nonce);	
+						}
+					} else {
+						errorcounter ++;
 					}
 					nonce = peek(artix, 0x0e);
+					if (errorcounter >= 3) {
+						nonce =0xFFFFFFFF;
+						applog(LOG_ERR,"ART%d:%d Zero Nonce", artix->device_id, thr->id % 8);
+						
+					}
 				}
 				mutex_unlock(&artix_mutex);
 				break;
