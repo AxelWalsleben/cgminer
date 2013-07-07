@@ -379,6 +379,7 @@ long getUsercode(struct cgpu_info *artix) {
 	}
         return byteArrayToLong(mydata);
 }
+static pthread_mutex_t artix_mutex;
 
 static void artix_detect()
 {
@@ -515,6 +516,7 @@ static void artix_detect()
         }
         free(buffer);
 	
+  mutex_init(&artix_mutex);	
 	for (i=0; i<10; i++)
 	{
 		tx[0] = 0x07; // Bank Select	
@@ -530,10 +532,10 @@ static void artix_detect()
 		if ((rx[4] & 2) == 2) {
 			artix = calloc(1, sizeof(*artix));
 			artix->drv = &artix_drv;
-			mutex_init(&artix->device_mutex);
+//			mutex_init(artix_mutex);
 			artix->device_fd = fd;
 			artix->deven = DEV_ENABLED;
-			artix->threads = 1;
+			artix->threads = 8;
 		  artix->deviceIndex = -1;                           
 		  artix->tms = false;
 		  artix->tdo = false;                 
@@ -595,56 +597,46 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 	tx[3] = 0x01; // Read Status
 	tx[4] = 0xFF;
 	tr.len = 5;
-	mutex_lock(&artix->device_mutex);
+	mutex_lock(&artix_mutex);
 	ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
-	for (i=0; i<artix->numDevices; i++)
-	{
-		SelectDevice(artix, i);
-    poke(artix, 0x01, byteArrayToLong(&work->midstate[0]));
-    poke(artix, 0x02, byteArrayToLong(&work->midstate[4]));
-    poke(artix, 0x03, byteArrayToLong(&work->midstate[8]));
-    poke(artix, 0x04, byteArrayToLong(&work->midstate[12]));
-    poke(artix, 0x05, byteArrayToLong(&work->midstate[16]));
-    poke(artix, 0x06, byteArrayToLong(&work->midstate[20]));
-    poke(artix, 0x07, byteArrayToLong(&work->midstate[24]));
-    poke(artix, 0x08, byteArrayToLong(&work->midstate[28]));
+//  applog(LOG_ERR,"ART%d:%d Loading Work", artix->device_id, thr->id % 8);
+	SelectDevice(artix, thr->id % 8);
+  poke(artix, 0x01, byteArrayToLong(&work->midstate[0]));
+  poke(artix, 0x02, byteArrayToLong(&work->midstate[4]));
+  poke(artix, 0x03, byteArrayToLong(&work->midstate[8]));
+  poke(artix, 0x04, byteArrayToLong(&work->midstate[12]));
+  poke(artix, 0x05, byteArrayToLong(&work->midstate[16]));
+  poke(artix, 0x06, byteArrayToLong(&work->midstate[20]));
+  poke(artix, 0x07, byteArrayToLong(&work->midstate[24]));
+  poke(artix, 0x08, byteArrayToLong(&work->midstate[28]));
 
-    poke(artix, 0x09, byteArrayToLong(&work->data[64]));
-    poke(artix, 0x0A, byteArrayToLong(&work->data[68]));
-    poke(artix, 0x0B, byteArrayToLong(&work->data[72]));
-		
-	}
-	mutex_unlock(&artix->device_mutex);
-	usleep(1000000);
+  poke(artix, 0x09, byteArrayToLong(&work->data[64]));
+  poke(artix, 0x0A, byteArrayToLong(&work->data[68]));
+  poke(artix, 0x0B, byteArrayToLong(&work->data[72]));
+	
+	mutex_unlock(&artix_mutex);
+	usleep(10000000);
 	lastnonce = 0;
 	while(1) {
-		mutex_lock(&artix->device_mutex);
+		mutex_lock(&artix_mutex);
 		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
-		SelectDevice(artix, 0);
+		SelectDevice(artix, thr->id % 8);
 		nonce = peek(artix, 0x0c);
 		if (lastnonce == nonce) { // finished work
-			i=0;
-			SelectDevice(artix, i);
-			while (i<artix->numDevices) {
 				nonce = peek(artix, 0x0e);
-				if (nonce != 0xFFFFFFFF) {
+				while (nonce != 0xFFFFFFFF) {
 //					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, i, nonce);
 					if (!thr->work_restart) {
-						submit_nonce(thr, work, nonce-1);	
+						submit_nonce(thr, work, nonce);	
 					}
-					
-				} else {
-					i++;
-					SelectDevice(artix, i);
+					nonce = peek(artix, 0x0e);
 				}
-					
-			}
-			mutex_unlock(&artix->device_mutex);
-			break;
+				mutex_unlock(&artix_mutex);
+				break;
 		} else {
-			mutex_unlock(&artix->device_mutex);
+			mutex_unlock(&artix_mutex);
 //			applog(LOG_ERR, "ART%d: Lastnonce: %08x - %08x", artix->device_id, lastnonce, nonce);
-			usleep(10000);	
+			usleep(1000);	
 			lastnonce = nonce;
 		}
 	}
@@ -653,11 +645,15 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
   return 0xFFFFFFFF;
 }
 
+static bool artix_thread_prepare(struct thr_info *thr)
+{
+	return true;
+}
 struct device_drv artix_drv = {
 	.dname = "artix",
 	.name = "ART",
 	.drv_detect = artix_detect,
+	.thread_prepare = artix_thread_prepare,
 	.scanhash = artix_scanhash,
-
 
 };

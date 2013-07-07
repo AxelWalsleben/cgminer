@@ -1,0 +1,39 @@
+cgminer.c:	if (likely(!getq->frozen)) {
+cgminer.c:	pthread_cond_broadcast(&getq->cond);
+cgminer.c:	while (!getq->frozen && !HASH_COUNT(staged_work))
+cgminer.c:		pthread_cond_wait(&getq->cond, stgd_lock);
+cgminer.c:	pthread_cond_signal(&getq->cond);
+cgminer.c:	stgd_lock = &getq->mutex;
+compat.h:	msecs = (req->tv_sec * 1000) + ((999999 + req->tv_nsec) / 1000000);
+compat.h:			tdone.tv_sec = tstart.tv_sec + req->tv_sec;
+compat.h:			tdone.tv_usec = tstart.tv_usec + ((999 + req->tv_nsec) / 1000);
+config.guess:	echo mips-compaq-nonstopux
+config.sub:	| m88110-* | m88k-* | maxq-* | mcore-* | metag-* | microblaze-* \
+uthash.h:                  _hs_q = (UT_hash_handle*)((_hs_q->next) ?                      \
+uthash.h:                          ((void*)((char*)(_hs_q->next) +                        \
+uthash.h:                      _hs_q = (UT_hash_handle*)((_hs_q->next) ?                  \
+uthash.h:                              ((void*)((char*)(_hs_q->next) +                    \
+uthash.h:                      _hs_q = (UT_hash_handle*)((_hs_q->next) ?                  \
+uthash.h:                              ((void*)((char*)(_hs_q->next) +                    \
+util.c:	INIT_LIST_HEAD(&tq->q);
+util.c:	pthread_mutex_init(&tq->mutex, NULL);
+util.c:	pthread_cond_init(&tq->cond, NULL);
+util.c:	list_for_each_entry_safe(ent, iter, &tq->q, q_node) {
+util.c:	pthread_cond_destroy(&tq->cond);
+util.c:	pthread_mutex_destroy(&tq->mutex);
+util.c:	mutex_lock(&tq->mutex);
+util.c:	tq->frozen = frozen;
+util.c:	pthread_cond_signal(&tq->cond);
+util.c:	mutex_unlock(&tq->mutex);
+util.c:	mutex_lock(&tq->mutex);
+util.c:	if (!tq->frozen) {
+util.c:		list_add_tail(&ent->q_node, &tq->q);
+util.c:	pthread_cond_signal(&tq->cond);
+util.c:	mutex_unlock(&tq->mutex);
+util.c:	mutex_lock(&tq->mutex);
+util.c:	if (!list_empty(&tq->q))
+util.c:		rc = pthread_cond_timedwait(&tq->cond, &tq->mutex, abstime);
+util.c:		rc = pthread_cond_wait(&tq->cond, &tq->mutex);
+util.c:	if (list_empty(&tq->q))
+util.c:	ent = list_entry(tq->q.next, struct tq_ent, q_node);
+util.c:	mutex_unlock(&tq->mutex);

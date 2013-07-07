@@ -536,7 +536,7 @@ struct cgpu_info {
 	bool polling;
 	bool flash_led;
 #endif /* USE_BITFORCE */
-#if defined(USE_BITFORCE) || defined(USE_BFLSC) || defined(USE_DOMINATOR) || defined(USE_ARTIX)
+#if defined(USE_BITFORCE) || defined(USE_BFLSC) || defined(USE_DOMINATOR)
 	pthread_mutex_t device_mutex;
 #endif /* USE_BITFORCE || USE_BFLSC || USE_DOMINATOR */
 	enum dev_enable deven;
