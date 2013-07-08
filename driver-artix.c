@@ -636,14 +636,19 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 				nonce = peek(artix, 0x0e);
 				while (nonce != 0xFFFFFFFF) {
 //					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, i, nonce);
+
 					if (nonce != 0x00000000) {
 						if (!thr->work_restart) {
 							submit_nonce(thr, work, nonce);	
+	
 						}
 					} else {
 						errorcounter ++;
 					}
 					nonce = peek(artix, 0x0e);
+					if (nonce == 0x7FFFFFFF) {
+						 nonce =0xFFFFFFFF;
+					}
 					if (errorcounter >= 1024) {
 						nonce =0xFFFFFFFF;
 						applog(LOG_ERR,"ART%d:%d Zero Nonce", artix->device_id, thr->id % 8);
