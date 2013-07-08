@@ -644,7 +644,7 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 						errorcounter ++;
 					}
 					nonce = peek(artix, 0x0e);
-					if (errorcounter >= 3) {
+					if (errorcounter >= 1024) {
 						nonce =0xFFFFFFFF;
 						applog(LOG_ERR,"ART%d:%d Zero Nonce", artix->device_id, thr->id % 8);
 						
