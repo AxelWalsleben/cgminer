@@ -545,33 +545,7 @@ static void artix_detect()
 		  artix->numDevices = getChain(artix, true);        
 			add_cgpu(artix);	
 			getUsercode(artix);
-/*
-			SelectDevice(artix, 0);
-			applog (LOG_ERR, "ID: %d has Code %08x ", 0, getUsercode(artix));
-			for (y=0; y<8; y++)
-			{
-				SelectDevice(artix, y);
-				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0f));
-				myPoke(artix, 0x01, 0x12345678);
-				myPoke(artix, 0x02, 0x12345678);
-				myPoke(artix, 0x03, 0x12345678);
-				myPoke(artix, 0x04, 0x12345678);
-				myPoke(artix, 0x05, 0x12345678);
-				myPoke(artix, 0x06, 0x12345678);
-				myPoke(artix, 0x07, 0x12345678);
-				myPoke(artix, 0x08, 0x12345678);
-				myPoke(artix, 0x09, 0x12345678);
-				myPoke(artix, 0x0a, 0x12345678);
-				myPoke(artix, 0x0b, 0x12345678);
-				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0c));
-			}
-			usleep(2200000);
-			for (y=0; y<8; y++)
-			{
-				SelectDevice(artix, y);
-				applog (LOG_ERR, "myPeek: %d has Value %08x", y, myPeek(artix, 0x0c));
-			}			
-*/			
+		
 		}
 	}
 	mutex_unlock(&artix_mutex);
@@ -626,30 +600,28 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 		mutex_lock(&artix_mutex);
 		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
 		SelectDevice(artix, thr->id % 8);
-		nonce = peek(artix, 0x0c);
-		state = peek(artix, 0x0f);
-		if ((state & 2) == 0) {
-			applog(LOG_ERR,"ART%d:%d Slot: %d REG: $0F %08x", artix->device_id, thr->id, artix->slot, state);
-		}
-
-		if (lastnonce == nonce) { // finished work
+		nonce = peek(artix, 0x0f);
+		if (((nonce & 1) == 0) && (((nonce >> 16) & 7) == (thr->id % 8))){ // finished work
+//			  applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
 				nonce = peek(artix, 0x0e);
 				while (nonce != 0xFFFFFFFF) {
-//					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, i, nonce);
+//					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
 
 					if (nonce != 0x00000000) {
 						if (!thr->work_restart) {
-							submit_nonce(thr, work, nonce);	
-	
+							if (submit_nonce(thr, work, nonce)) {	
+								artix->fpga_status[thr->id % 8] = 1;
+							} else {
+								artix->fpga_status[thr->id % 8] = 0;
+							}
 						}
 					} else {
 						errorcounter ++;
+						artix->fpga_status[thr->id % 8] = 0;
 					}
 					nonce = peek(artix, 0x0e);
-					if (nonce == 0x7FFFFFFF) {
-						 nonce =0xFFFFFFFF;
-					}
-					if (errorcounter >= 1024) {
+					if (errorcounter >= 128) {
+						artix->fpga_status[thr->id % 8] = 0;
 						nonce =0xFFFFFFFF;
 						applog(LOG_ERR,"ART%d:%d Zero Nonce", artix->device_id, thr->id % 8);
 						
@@ -673,11 +645,30 @@ static bool artix_thread_prepare(struct thr_info *thr)
 {
 	return true;
 }
+
+static void artix_statline_before(char *buf, struct cgpu_info *artix)
+{
+	char info[64];
+
+	sprintf(info, " %d-%d-%d-%d-%d-%d-%d-%d  | ",
+			artix->fpga_status[0], 
+			artix->fpga_status[1], 
+			artix->fpga_status[2], 
+			artix->fpga_status[3], 
+			artix->fpga_status[4], 
+			artix->fpga_status[5], 
+			artix->fpga_status[6], 
+			artix->fpga_status[7] );
+
+	strcat(buf, info);
+}
+
 struct device_drv artix_drv = {
 	.dname = "artix",
 	.name = "ART",
 	.drv_detect = artix_detect,
 	.thread_prepare = artix_thread_prepare,
+	.get_statline_before = artix_statline_before,
 	.scanhash = artix_scanhash,
 
 };

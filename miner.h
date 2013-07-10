@@ -506,6 +506,7 @@ struct cgpu_info {
 	unsigned char jtag_buf_rx[1024];
 	uint32_t numDevices;
 	uint32_t lastnonce;
+	unsigned char fpga_status[8];
   int device_fd;
   bool tms;
   bool tdo;
