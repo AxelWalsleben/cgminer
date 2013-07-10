@@ -607,7 +607,7 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 				while (nonce != 0xFFFFFFFF) {
 //					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
 
-					if (nonce != 0x00000000) {
+					if ((nonce != 0x00000000) && (nonce != 0x7FFFFFFF)){
 						if (!thr->work_restart) {
 							if (submit_nonce(thr, work, nonce)) {	
 								artix->fpga_status[thr->id % 8] = 1;
