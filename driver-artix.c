@@ -95,6 +95,8 @@ void set_lasttms(struct cgpu_info *artix)
 void tapTestLogicReset(struct cgpu_info *artix)
 {
   int i;
+  memset(ones , 0xff, CHUNK_SIZE);
+  memset(zeros, 0x00, CHUNK_SIZE);
   flush_tms(artix, true);
   for(i=0; i<5; i++)
       set_tms(artix, true);
@@ -152,7 +154,7 @@ void shiftTDITDO(struct cgpu_info *artix, const unsigned char *tdi, unsigned cha
 /*	
 	for ( i=0; i<artix->jtag_len; i=i+16)
 	{
-		applog(LOG_ERR, "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_tx[i], artix->jtag_buf_tx[i+1],  artix->jtag_buf_tx[i+2], artix->jtag_buf_tx[i+3], artix->jtag_buf_tx[i+4], artix->jtag_buf_tx[i+5], artix->jtag_buf_tx[i+6], artix->jtag_buf_tx[i+7], artix->jtag_buf_tx[i+8], artix->jtag_buf_tx[i+9], artix->jtag_buf_tx[i+10], artix->jtag_buf_tx[i+11], artix->jtag_buf_tx[i+12], artix->jtag_buf_tx[i+13], artix->jtag_buf_tx[i+14], artix->jtag_buf_tx[i+15]);
+		applog(LOG_ERR, ">> %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_tx[i], artix->jtag_buf_tx[i+1],  artix->jtag_buf_tx[i+2], artix->jtag_buf_tx[i+3], artix->jtag_buf_tx[i+4], artix->jtag_buf_tx[i+5], artix->jtag_buf_tx[i+6], artix->jtag_buf_tx[i+7], artix->jtag_buf_tx[i+8], artix->jtag_buf_tx[i+9], artix->jtag_buf_tx[i+10], artix->jtag_buf_tx[i+11], artix->jtag_buf_tx[i+12], artix->jtag_buf_tx[i+13], artix->jtag_buf_tx[i+14], artix->jtag_buf_tx[i+15]);
 	}
 */	
 		struct spi_ioc_transfer tr = {
@@ -168,9 +170,9 @@ void shiftTDITDO(struct cgpu_info *artix, const unsigned char *tdi, unsigned cha
 /*
 	for ( i=0; i<ret; i=i+16)
 	{
-		applog(LOG_ERR, "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_rx[i], artix->jtag_buf_rx[i+1],  artix->jtag_buf_rx[i+2], artix->jtag_buf_rx[i+3], artix->jtag_buf_rx[i+4], artix->jtag_buf_rx[i+5], artix->jtag_buf_rx[i+6], artix->jtag_buf_rx[i+7], artix->jtag_buf_rx[i+8], artix->jtag_buf_rx[i+9], artix->jtag_buf_rx[i+10], artix->jtag_buf_rx[i+11], artix->jtag_buf_rx[i+12], artix->jtag_buf_rx[i+13], artix->jtag_buf_rx[i+14], artix->jtag_buf_rx[i+15]);
+		applog(LOG_ERR, "<<%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", artix->jtag_buf_rx[i], artix->jtag_buf_rx[i+1],  artix->jtag_buf_rx[i+2], artix->jtag_buf_rx[i+3], artix->jtag_buf_rx[i+4], artix->jtag_buf_rx[i+5], artix->jtag_buf_rx[i+6], artix->jtag_buf_rx[i+7], artix->jtag_buf_rx[i+8], artix->jtag_buf_rx[i+9], artix->jtag_buf_rx[i+10], artix->jtag_buf_rx[i+11], artix->jtag_buf_rx[i+12], artix->jtag_buf_rx[i+13], artix->jtag_buf_rx[i+14], artix->jtag_buf_rx[i+15]);
 	}
-	*/
+*/
 		  if (tdo) {
 	  	for (i=0; i<length/8; i++)
 	  	{
@@ -344,10 +346,12 @@ long peek(struct cgpu_info *artix, int addr) {
 
   for(dev=artix->deviceIndex+1; dev<artix->numDevices; dev++)
     shiftMyTDI(artix, ones, 1, false);  // Send pre BYPASS bits.
-	shiftTDITDO(artix, NULL, mydata, 33, true);	
+  
+	shiftTDITDO(artix, NULL, mydata, 30, true);	
 	
 	return byteArrayToLong(mydata);    ;
 }
+
 
 long getUsercode(struct cgpu_info *artix) {
 //	applog(LOG_ERR, "getUSercode");
@@ -377,8 +381,165 @@ long getUsercode(struct cgpu_info *artix) {
 	{
 		applog(LOG_ERR, "UserIDs %d: %08x",i ,byteArrayToLong(&mydata[i*4]) );
 	}
-        return byteArrayToLong(mydata);
+  set_tms(artix, true);
+  set_tms(artix, false);
+  
+  return byteArrayToLong(mydata);
 }
+
+uint32_t sendJtag(struct cgpu_info *artix, const unsigned char *tx, unsigned char *rx, int length)
+{
+  uint32_t i, ret;
+  if(length==0) return;
+
+	struct spi_ioc_transfer tr = {
+		        .tx_buf = (unsigned long)tx,
+		        .rx_buf = (unsigned long)rx,
+		        .len = length,
+		        .delay_usecs = SPI_BUS_DELAY,
+		        .speed_hz = SPI_BUS_SPEED,
+		        .bits_per_word = SPI_BUS_BITS,
+	};	
+	tr.len = length;
+	ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
+			
+	return ret;		
+}
+
+void resetJtag(struct cgpu_info *artix)
+{
+	unsigned char tx_buf[] = {0x10, 0x64, 0x64, 0x64, 0x64, 0x64, 0x88};
+	unsigned char rx_buf[32];
+	sendJtag (artix, tx_buf, rx_buf, 7);
+}
+
+uint32_t readRegJtag(struct cgpu_info *artix, uint32_t chip, uint32_t reg)
+{
+	unsigned char tx_buf[] = {0x10, 
+														0x20, 0x64, 0x64, 0x20, 0x20,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x75,
+														0x64, 0x64, 0x20, 0x20, // Shift-DR
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x75,
+														0x64, 0x64, 0x20, 0x20, 
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+														0x31, 0x31, 0x31, 0x31, 0x75,
+														0x64 ,0x20, 0x88
+														};
+	unsigned char rx_buf[256];
+	
+	uint32_t i, ret;
+	
+	tx_buf[6+((7-chip)*6)  ] = 0x20;
+	tx_buf[6+((7-chip)*6)+1] = 0x31;
+	tx_buf[6+((7-chip)*6)+2] = 0x20;
+	tx_buf[6+((7-chip)*6)+3] = 0x20;
+	tx_buf[6+((7-chip)*6)+4] = 0x20;
+	tx_buf[6+((7-chip)*6)+5] = 0x20;
+  tx_buf[53] |=0x44;
+
+  for (i=0; i<38; i++)
+  	tx_buf[(58+7-chip)+i] = 0x20;	
+  
+	switch (reg) {
+		case 0:  break;
+		case 1:  tx_buf[(58+7-chip)+32] = 0x31;
+						 break;
+		case 2:  tx_buf[(58+7-chip)+33] = 0x31;
+						 break;
+		case 3:  tx_buf[(58+7-chip)+32] = 0x31;
+						 tx_buf[(58+7-chip)+33] = 0x31;
+						 break;
+		case 4:  tx_buf[(58+7-chip)+34] = 0x31;
+						 break;
+		case 5:  tx_buf[(58+7-chip)+32] = 0x31;
+						 tx_buf[(58+7-chip)+34] = 0x31;
+						 break;
+		case 6:  tx_buf[(58+7-chip)+33] = 0x31;
+						 tx_buf[(58+7-chip)+34] = 0x31;
+						 break;
+		case 7:  tx_buf[(58+7-chip)+32] = 0x31;
+						 tx_buf[(58+7-chip)+33] = 0x31;
+						 tx_buf[(58+7-chip)+34] = 0x31;
+						 break;
+		case 8:  tx_buf[(58+7-chip)+35] = 0x31;
+						 break;
+		case 9:  tx_buf[(58+7-chip)+32] = 0x31;
+						 tx_buf[(58+7-chip)+35] = 0x31;			
+						 break;
+		case 10: tx_buf[(58+7-chip)+33] = 0x31;
+						 tx_buf[(58+7-chip)+35] = 0x31;			
+						 break;
+		case 11: tx_buf[(58+7-chip)+32] = 0x31;
+						 tx_buf[(58+7-chip)+33] = 0x31;
+						 tx_buf[(58+7-chip)+35] = 0x31;			
+						 break;
+		case 12: tx_buf[(58+7-chip)+34] = 0x31;
+						 tx_buf[(58+7-chip)+35] = 0x31;			
+						 break;
+		case 13: tx_buf[(58+7-chip)+32] = 0x31;
+						 tx_buf[(58+7-chip)+34] = 0x31;
+						 tx_buf[(58+7-chip)+35] = 0x31;			
+						 break;
+		case 14: tx_buf[(58+7-chip)+33] = 0x31;
+						 tx_buf[(58+7-chip)+34] = 0x31;
+						 tx_buf[(58+7-chip)+35] = 0x31;			
+						 break;
+		case 15: tx_buf[(58+7-chip)+32] = 0x31;
+						 tx_buf[(58+7-chip)+33] = 0x31;
+						 tx_buf[(58+7-chip)+34] = 0x31;
+						 tx_buf[(58+7-chip)+35] = 0x31;			
+						 break;
+		default: break;
+	}  
+  tx_buf[(58+7-chip)+36] = 0x20;
+  if ((1 ^ (tx_buf[(58+7-chip)+32] & 1) ^ (tx_buf[(58+7-chip)+33] & 1) ^ (tx_buf[(58+7-chip)+34] & 1) ^ (tx_buf[(58+7-chip)+35] & 1)) == 1)
+  	tx_buf[(58+7-chip)+37] = 0x31;
+  else
+  	tx_buf[(58+7-chip)+37] = 0x20;
+  tx_buf[102] |=0x44;
+  
+	ret = sendJtag (artix, tx_buf, rx_buf, sizeof(tx_buf));
+/*	
+	for ( i=0; i<sizeof(tx_buf); i=i+16)
+	{
+		applog(LOG_ERR, "-> %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", tx_buf[i], tx_buf[i+1],  tx_buf[i+2], tx_buf[i+3], tx_buf[i+4], tx_buf[i+5], tx_buf[i+6], tx_buf[i+7], tx_buf[i+8], tx_buf[i+9], tx_buf[i+10], tx_buf[i+11], tx_buf[i+12], tx_buf[i+13], tx_buf[i+14], tx_buf[i+15]);
+	}
+*/
+
+/*
+	for ( i=0; i<ret; i=i+16)
+	{
+		applog(LOG_ERR, "-> %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", rx_buf[i], rx_buf[i+1],  rx_buf[i+2], rx_buf[i+3], rx_buf[i+4], rx_buf[i+5], rx_buf[i+6], rx_buf[i+7], rx_buf[i+8], rx_buf[i+9], rx_buf[i+10], rx_buf[i+11], rx_buf[i+12], rx_buf[i+13], rx_buf[i+14], rx_buf[i+15]);
+	}
+*/
+	for (i=0; i<4; i++)
+	{
+		rx_buf[i] = 0x00;
+	}
+
+	for (i=0; i<32; i++)
+	{
+		rx_buf[i/8] |= ((rx_buf[i+116-chip] & 1) << i%8);
+	}			
+	return byteArrayToLong(rx_buf);
+}
+
 static pthread_mutex_t artix_mutex;
 
 static void artix_detect()
@@ -544,8 +705,21 @@ static void artix_detect()
 		  artix->slot = i;
 		  artix->numDevices = getChain(artix, true);        
 			add_cgpu(artix);	
-			getUsercode(artix);
-		
+ 			getUsercode(artix);
+			// TestCode
+//			SelectDevice(artix, 7);
+//			applog (LOG_ERR, "a %08x", peek(artix, 0x0f));
+			uint32_t dev;
+			resetJtag(artix);
+/*			
+			for (y=0; y<16; y++)
+			{
+				for (dev=0; dev<8; dev++)
+				{
+					applog (LOG_ERR, "Chip: %d REG:%02x = %08x", dev, y, readRegJtag(artix, dev, y));
+				}
+			}
+*/
 		}
 	}
 	mutex_unlock(&artix_mutex);
@@ -558,6 +732,12 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 	uint32_t nonce, lastnonce, errorcounter, state;
   uint8_t tx[16] = {0, };
   uint8_t rx[16] = {0, };
+	static bool first_run = true;
+	if (first_run) {
+		usleep(50000*thr->id);
+		first_run = false;
+		//applog(LOG_ERR,"ART%d:%d First Run", artix->device_id, thr->id % 8);	
+	}
 	
   struct spi_ioc_transfer tr = {
           .tx_buf = (unsigned long)tx,
@@ -599,11 +779,14 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 	while(1) {
 		mutex_lock(&artix_mutex);
 		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
-		SelectDevice(artix, thr->id % 8);
-		nonce = peek(artix, 0x0f);
+		resetJtag(artix);
+//		SelectDevice(artix, thr->id % 8);
+		nonce = readRegJtag(artix, thr->id % 8, 0x0f);
+
 		if (((nonce & 1) == 0) && (((nonce >> 16) & 7) == (thr->id % 8))){ // finished work
-//			  applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
-				nonce = peek(artix, 0x0e);
+  //		  applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
+
+				nonce = readRegJtag(artix, thr->id % 8, 0x0e);
 				while (nonce != 0xFFFFFFFF) {
 //					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
 
@@ -619,7 +802,7 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 						errorcounter ++;
 						artix->fpga_status[thr->id % 8] = 0;
 					}
-					nonce = peek(artix, 0x0e);
+					nonce = readRegJtag(artix, thr->id % 8, 0x0e);
 					if (errorcounter >= 128) {
 						artix->fpga_status[thr->id % 8] = 0;
 						nonce =0xFFFFFFFF;
