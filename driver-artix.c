@@ -729,7 +729,7 @@ static void artix_detect()
 static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t __maybe_unused max_nonce)
 {
 	struct cgpu_info *artix = thr->cgpu;
-	uint32_t nonce, lastnonce, errorcounter, state;
+	uint32_t nonce, status, errorcounter, state;
   uint8_t tx[16] = {0, };
   uint8_t rx[16] = {0, };
 	static bool first_run = true;
@@ -775,22 +775,20 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 	
 	mutex_unlock(&artix_mutex);
 	usleep(10000000);
-	lastnonce = 0;
 	while(1) {
 		mutex_lock(&artix_mutex);
 		ret = ioctl(artix->device_fd, SPI_IOC_MESSAGE(1), &tr);
 		resetJtag(artix);
 //		SelectDevice(artix, thr->id % 8);
-		nonce = readRegJtag(artix, thr->id % 8, 0x0f);
+		status = readRegJtag(artix, thr->id % 8, 0x0f);
 
-		if (((nonce & 1) == 0) && (((nonce >> 16) & 7) == (thr->id % 8))){ // finished work
+
+		if (((status & 1) == 0) || (((status >> 24) & 255) >0 )){ // finished work
   //		  applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
-
-				nonce = readRegJtag(artix, thr->id % 8, 0x0e);
-				while (nonce != 0xFFFFFFFF) {
-//					applog(LOG_ERR,"ART%d:%d = %08x", artix->device_id, thr->id % 8, nonce);
-
-					if ((nonce != 0x00000000) && (nonce != 0x7FFFFFFF)){
+				i = (status >> 24) & 255;
+				while (i>0) {
+					nonce = readRegJtag(artix, thr->id % 8, 0x0e);	
+					if ((nonce != 0xFFFFFFFF) && (nonce != 0x00000000) && (nonce != 0x7FFFFFFF)){
 						if (!thr->work_restart) {
 							if (submit_nonce(thr, work, nonce)) {	
 								artix->fpga_status[thr->id % 8] = 1;
@@ -802,21 +800,21 @@ static int64_t artix_scanhash(struct thr_info *thr, struct work *work, int64_t _
 						errorcounter ++;
 						artix->fpga_status[thr->id % 8] = 0;
 					}
-					nonce = readRegJtag(artix, thr->id % 8, 0x0e);
+						
+					i--;
 					if (errorcounter >= 128) {
 						artix->fpga_status[thr->id % 8] = 0;
-						nonce =0xFFFFFFFF;
+						i=0;
 						applog(LOG_ERR,"ART%d:%d Zero Nonce", artix->device_id, thr->id % 8);
-						
 					}
 				}
 				mutex_unlock(&artix_mutex);
-				break;
+				if ((status & 1) == 0) {
+					break;
+				}
 		} else {
 			mutex_unlock(&artix_mutex);
-//			applog(LOG_ERR, "ART%d: Lastnonce: %08x - %08x", artix->device_id, lastnonce, nonce);
 			usleep(1000);	
-			lastnonce = nonce;
 		}
 	}
   
